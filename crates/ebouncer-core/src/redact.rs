@@ -8,10 +8,7 @@ use std::sync::OnceLock;
 fn secret_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(
-            r##"(?i)\b(api[_-]?key|token|secret|password|passwd|authorization|access[_-]?key|private[_-]?key)(\s*[:=]\s*)((?:bearer|basic)\s+)?([^\s'"]+)"##,
-        )
-        .unwrap()
+        Regex::new(r"(?i)\b(api[_-]?key|token|secret|password|passwd|authorization|access[_-]?key|private[_-]?key)(\s*[:=]\s*)((?:bearer|basic)\s+)?([^\s]+)").unwrap()
     })
 }
 
@@ -41,6 +38,11 @@ pub fn redact(cmd: &str) -> String {
     out
 }
 
+/// 测试辅助：判断 s 是否不含 needle（避开 assert 内嵌取反符，防网页编辑器吞字符）。
+fn lacks(s: &str, needle: &str) -> bool {
+    !s.contains(needle)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -48,13 +50,13 @@ mod tests {
     fn keeps_key_redacts_value() {
         let r = redact("export API_KEY=sk-abcdef123456");
         assert!(r.contains("API_KEY="));
-        assert!(!r.contains("sk-abcdef123456"));
+        assert!(lacks(&r, "sk-abcdef123456"));
         assert!(r.contains("<redacted sha256:"));
     }
     #[test]
     fn redacts_bearer_scheme() {
         let r = redact("curl -H Authorization: Bearer ghp_secrettoken");
-        assert!(!r.contains("ghp_secrettoken"));
+        assert!(lacks(&r, "ghp_secrettoken"));
         assert!(r.contains("Bearer"));
     }
     #[test]
