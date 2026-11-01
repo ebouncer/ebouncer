@@ -55,13 +55,21 @@ fn first_remote_url(project_dir: &Path) -> Option<String> {
 
 /// git@github.com:acme/billing.git / https://github.com/acme/billing.git → github.com/acme/billing
 fn normalize_remote(u: &str) -> String {
-    let mut s = u.to_string();
-    if let Some(rest) = s.strip_prefix("https://").or_else(|| s.strip_prefix("http://")) {
-        s = rest.to_string();
+    let mut s = u.trim().to_string();
+    for p in ["https://", "http://", "ssh://", "git://"] {
+        if let Some(rest) = s.strip_prefix(p) {
+            s = rest.to_string();
+            break;
+        }
     }
-    if let Some(rest) = s.split_once('@') {
-        if rest.contains(':') {
-            s = format!("{}:{}", rest.split(':').next().unwrap_or(""), rest.splitn(2, ':').nth(1).unwrap_or(""));
+    if let Some(at) = s.find('@') {
+        s = s[at + 1..].to_string();
+    }
+    if let Some(colon) = s.find(':') {
+        let tail = &s[colon + 1..];
+        // scp 语法 host:path → host/path；host:22 这类纯数字端口不转换
+        if !tail.is_empty() && !tail.chars().next().unwrap_or('0').is_ascii_digit() {
+            s = format!("{}/{}", &s[..colon], tail);
         }
     }
     s.trim_end_matches('/').trim_end_matches(".git").to_string()
