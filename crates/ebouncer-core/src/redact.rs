@@ -9,7 +9,7 @@ fn secret_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(
-            r"(?i)\b(api[_-]?key|token|secret|password|passwd|authorization|access[_-]?key|private[_-]?key)(\s*[:=]\s*)((?:bearer|basic)\s+)?([^\s'\"]+)",
+            r##"(?i)\b(api[_-]?key|token|secret|password|passwd|authorization|access[_-]?key|private[_-]?key)(\s*[:=]\s*)((?:bearer|basic)\s+)?([^\s'"]+)"##,
         )
         .unwrap()
     })
@@ -46,11 +46,16 @@ mod tests {
     use super::*;
     #[test]
     fn keeps_key_redacts_value() {
-        let r = redact("export API_KEY=sk-abcdef123456 && curl -H 'Authorization: Bearer ghp_x'");
+        let r = redact("export API_KEY=sk-abcdef123456");
         assert!(r.contains("API_KEY="));
         assert!(!r.contains("sk-abcdef123456"));
-        assert!(!r.contains("ghp_x"));
         assert!(r.contains("<redacted sha256:"));
+    }
+    #[test]
+    fn redacts_bearer_scheme() {
+        let r = redact("curl -H Authorization: Bearer ghp_secrettoken");
+        assert!(!r.contains("ghp_secrettoken"));
+        assert!(r.contains("Bearer"));
     }
     #[test]
     fn passthrough_clean() {
