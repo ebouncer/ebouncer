@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ebouncer.dev/schemas/ledger.schema.json",
+  "title": "eBouncer Ledger Event",
+  "description": "AI 花费账本事件流（~/.ebouncer/ledger.jsonl，每行一条）。工具按次维度 requests_search/requests_fetch 自第一天存在。",
+  "type": "object",
+  "required": ["ts", "session_id", "tool", "project"],
+  "additionalProperties": false,
+  "properties": {
+    "ts": { "type": "string", "format": "date-time", "description": "ISO8601 UTC" },
+    "session_id": { "type": "string" },
+    "tool": { "type": "string", "enum": ["claude-code", "codex", "dsh", "cursor", "manual", "other"] },
+    "project": { "type": "string", "description": "归一化项目名（目录名或仓库名）" },
+    "client": { "type": ["string", "null"], "description": "归因客户（K2 优先级链解析结果）" },
+    "model": { "type": ["string", "null"] },
+    "tokens_in": { "type": "integer", "minimum": 0 },
+    "tokens_out": { "type": "integer", "minimum": 0 },
+    "cache_read": { "type": "integer", "minimum": 0 },
+    "cost_native": { "type": "number", "minimum": 0, "description": "日志自带成本字段（若有）" },
+    "currency": { "type": "string", "enum": ["CNY", "USD"], "default": "CNY" },
+    "requests_search": { "type": "integer", "minimum": 0, "description": "Web Search 成功请求次数（按次计费维度）" },
+    "requests_fetch": { "type": "integer", "minimum": 0, "description": "Fetch 成功请求次数（按次计费维度）" }
+  }
+}

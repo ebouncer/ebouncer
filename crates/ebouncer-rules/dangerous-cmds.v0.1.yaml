@@ -1,0 +1,44 @@
+# eBouncer 危险命令基线 v0.1 —— 30 条
+# severity: low|medium|high|critical；action: ask|deny（v0.1 dry-run 一律降级为 log-*）
+# 模式为正则，匹配 bash 语义下的常见变体；宁缺毋滥，误拦率是留存头号指标。
+version: "0.1.0"
+rules:
+  # ---- 文件系统毁灭级 ----
+  - { id: rm-rf-root,        pattern: 'rm\s+(-[a-zA-Z]+\s+)*(/|/\*|\s~|\s\$HOME)(\s|$)',                          severity: critical, action: deny, note: "删除根/家目录（48k 文件事故同款）" }
+  - { id: rm-rf-home-parent, pattern: 'rm\s+(-[a-zA-Z]+\s+)*~/?\.\.\.?',                                           severity: critical, action: deny, note: "删除家目录上层" }
+  - { id: rm-fr-star,        pattern: 'rm\s+-fr?\s+(\*|\.\*)(\s|$)',                                               severity: high,     action: deny, note: "当前目录全删" }
+  - { id: find-delete,       pattern: 'find\s+.*-delete',                                                          severity: high,     action: ask }
+  - { id: find-exec-rm,      pattern: 'find\s+.*-exec(-plus)?\s+rm',                                               severity: high,     action: ask }
+  - { id: xargs-rm,          pattern: 'xargs\s+(-[a-zA-Z]+\s+)*rm',                                                severity: high,     action: ask }
+  - { id: shred,             pattern: '\bshred\b',                                                                 severity: high,     action: ask }
+  - { id: truncate-large,    pattern: 'truncate\s+(-[a-zA-Z]+\s+)*(-s\s*0|--size\s*0)',                            severity: medium,   action: ask }
+  # ---- 磁盘/分区级 ----
+  - { id: dd-of-dev,         pattern: 'dd\s+.*of=/dev/',                                                           severity: critical, action: deny }
+  - { id: mkfs,              pattern: '\bmkfs(\.\w+)?\s',                                                          severity: critical, action: deny }
+  - { id: fdisk-parted,      pattern: '\b(fdisk|parted|wipefs)\b',                                                 severity: critical, action: deny }
+  - { id: lvremove-vg,       pattern: '\b(lvremove|vgremove)\b',                                                   severity: critical, action: deny }
+  # ---- Git 不可逆 ----
+  - { id: git-clean-f,       pattern: 'git\s+clean\s+(-[a-zA-Z]*f[a-zA-Z]*\s*)+',                                  severity: high,     action: ask, note: "清除未跟踪文件" }
+  - { id: git-reset-hard,    pattern: 'git\s+reset\s+--hard',                                                      severity: high,     action: ask }
+  - { id: git-push-force,    pattern: 'git\s+push\s+.*(-f\b|--force(?!-with-lease))',                              severity: high,     action: ask }
+  - { id: git-branch-d,      pattern: 'git\s+branch\s+-D',                                                         severity: medium,   action: ask }
+  - { id: git-checkout-dot,  pattern: 'git\s+checkout\s+\.',                                                       severity: medium,   action: ask }
+  # ---- 权限/系统级 ----
+  - { id: chmod-777-r,       pattern: 'chmod\s+(-R\s+)?7[0-7]{2}\s+(/|~|\$HOME)',                                  severity: high,     action: ask }
+  - { id: chown-r-root,      pattern: 'chown\s+.*-R\s+.*(/|/etc|/usr|/var)',                                       severity: critical, action: deny }
+  - { id: rm-etc,            pattern: 'rm\s+(-[a-zA-Z]+\s+)*(/etc|/usr|/boot|/lib)\b',                             severity: critical, action: deny }
+  - { id: curl-sh-bash,      pattern: '(curl|wget)\s+[^|;]*\|\s*(sudo\s+)?(ba)?sh',                                severity: high,     action: ask, note: "管道执行远程脚本" }
+  - { id: kill-init,         pattern: 'kill\s+(-9\s+)?1\b',                                                        severity: critical, action: deny }
+  - { id: pkill-broad,       pattern: 'pkill\s+(-9\s+)?(bash|node|python|sshd)',                                   severity: medium,   action: ask }
+  # ---- 网络外泄面 ----
+  - { id: scp-out-secrets,   pattern: '(scp|rsync)\s+.*(id_rsa|\.ssh/|\.aws/|\.env|credentials)',                  severity: high,     action: ask, note: "凭据文件外传" }
+  - { id: curl-file-post,    pattern: 'curl\s+.*-T\s+.*(id_rsa|\.ssh/|\.aws/|\.env)',                              severity: high,     action: ask }
+  - { id: base64-payload,    pattern: '(base64|xxd).*\|\s*(curl|wget|nc|ssh)',                                     severity: medium,   action: ask }
+  # ---- 包/服务破坏 ----
+  - { id: apt-remove-wild,   pattern: '(apt|apt-get|yum|dnf)\s+(-[a-zA-Z]+\s+)*remove\s+.*(\*|linux)',             severity: high,     action: deny }
+  - { id: systemctl-disable, pattern: 'systemctl\s+disable\s+.*(ssh|sshd|firewalld|NetworkManager)',               severity: medium,   action: ask }
+  - { id: crontab-r,         pattern: 'crontab\s+-r\b',                                                            severity: medium,   action: ask }
+  - { id: docker-prune-all,  pattern: 'docker\s+system\s+prune\s+-a\s+--volumes',                                   severity: high,     action: ask }
+  # ---- 云资源（L2/R2 护栏前哨：v0.1 先记账） ----
+  - { id: aws-destroy,       pattern: 'aws\s+.*delete|aws\s+.*terminate',                                          severity: critical, action: deny, note: "PocketOS 9 秒事故的命令签名" }
+  - { id: kubectl-del-ns,    pattern: 'kubectl\s+delete\s+(namespace|ns)',                                         severity: critical, action: deny }

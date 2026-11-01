@@ -1,0 +1,12 @@
+[package]
+name = "ebouncer-adapters"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "eBouncer 宿主日志解析器：Claude Code / Codex / DSH → 统一账本事件"
+
+[dependencies]
+ebouncer-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

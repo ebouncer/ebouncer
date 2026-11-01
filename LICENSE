@@ -1,0 +1,8 @@
+eBouncer 采用 GNU Affero General Public License v3.0 only（AGPL-3.0-only）发布。
+
+本文件为占位。发布前请用官方全文替换：
+
+  curl -o LICENSE https://www.gnu.org/licenses/agpl-3.0.txt
+
+所有源文件头部已含 SPDX-License-Identifier: AGPL-3.0-only 标识。
+商业授权（双轨制）联系：见 README。

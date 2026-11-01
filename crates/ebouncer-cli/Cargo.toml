@@ -1,0 +1,19 @@
+[package]
+name = "ebouncer-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "eBouncer 命令行工具 ebc：ledger / bill / rules / doctor / demo"
+
+[[bin]]
+name = "ebc"
+path = "src/main.rs"
+
+[dependencies]
+ebouncer-core = { workspace = true }
+ebouncer-adapters = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }

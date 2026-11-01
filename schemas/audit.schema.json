@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ebouncer.dev/schemas/audit.schema.json",
+  "title": "eBouncer Audit Event",
+  "description": "防篡改审计链事件（~/.ebouncer/audit.jsonl，0700）。命令文本必须落盘前脱敏（D3）；key_ref 为 per-subject 加密密钥引用（K1，GDPR 删除权路径）；hash 为链式 sha256。",
+  "type": "object",
+  "required": ["seq", "ts_ns", "uid", "tty", "session", "cmd", "decision", "prev_hash", "hash"],
+  "additionalProperties": false,
+  "properties": {
+    "seq": { "type": "integer", "minimum": 0 },
+    "ts_ns": { "type": "integer", "description": "Unix 纳秒时间戳" },
+    "uid": { "type": "integer" },
+    "tty": { "type": "string" },
+    "session": { "type": "string" },
+    "cmd": { "type": "string", "description": "已脱敏命令文本，secret 值以 <redacted sha256:...> 形式留存" },
+    "rule_id": { "type": ["string", "null"] },
+    "decision": { "type": "string", "enum": ["allow", "log", "log-ask", "log-deny", "ask", "deny", "auto-deny"] },
+    "key_ref": { "type": ["string", "null"], "description": "主体维度加密密钥 ID；行使删除权时销毁对应密钥（crypto-shredding），链结构保留" },
+    "prev_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

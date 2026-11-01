@@ -1,0 +1,11 @@
+[package]
+name = "ebouncer-rules"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "eBouncer 出厂规则快照与费率表数据（规则集市种子）"
+
+[dependencies]
+serde_yaml = { workspace = true }
+regex = { workspace = true }

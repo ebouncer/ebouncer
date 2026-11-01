@@ -1,0 +1,18 @@
+# 费率表示例：deepseek（工具按次价格为 2026-11-01 官方公告已核验值）
+# ⚠️ models 段的 token 单价为占位——正式启用前必须从 https://api-docs.deepseek.com/zh-cn/quick_start/pricing/ 复核后替换，禁止凭记忆填价。
+vendor: deepseek
+currency: CNY
+effective_from: "2026-11-01"
+models:
+  - name: deepseek-chat
+    input_per_mtok: 2.0      # TODO 核验后替换
+    output_per_mtok: 3.0     # TODO 核验后替换
+    cache_read_per_mtok: 0.5 # TODO 核验后替换
+  - name: deepseek-reasoner
+    input_per_mtok: 4.0      # TODO 核验后替换
+    output_per_mtok: 16.0    # TODO 核验后替换
+    cache_read_per_mtok: 0.5 # TODO 核验后替换
+tool_requests:
+  # 已核验：每 1000 次【成功】请求 5 元，失败/无结果不计费（官方 2026-11-01 起执行）
+  search_per_k: 5.0
+  fetch_per_k: 5.0

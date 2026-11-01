@@ -1,0 +1,16 @@
+[package]
+name = "ebouncer-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "eBouncer 核心库：账本 schema、归因引擎、规则匹配、费率表、脱敏（纯逻辑，可单测）"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+regex = { workspace = true }
+chrono = { workspace = true }
