@@ -15,13 +15,13 @@ mod tests {
     #[test]
     fn rules_yaml_loads() {
         let parsed: serde_yaml::Value = serde_yaml::from_str(DANGEROUS_CMDS).unwrap();
-        let n = parsed["rules"].as_seq().unwrap().len();
+        let n = parsed["rules"].as_sequence().unwrap().len();
         assert!(n >= 30, "基线至少 30 条，实际 {n}");
     }
     #[test]
     fn all_patterns_compile() {
         let parsed: serde_yaml::Value = serde_yaml::from_str(DANGEROUS_CMDS).unwrap();
-        for r in parsed["rules"].as_seq().unwrap() {
+        for r in parsed["rules"].as_sequence().unwrap() {
             let pat = r["pattern"].as_str().unwrap();
             assert!(regex::Regex::new(pat).is_ok(), "非法正则: {pat}");
         }
