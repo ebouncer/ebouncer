@@ -9,13 +9,13 @@ fn secret_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(
-            r"(?i)\b(api[_-]?key|token|secret|password|passwd|authorization|access[_-]?key|private[_-]?key)(\s*[:=]\s*)([^\s'\"]+)",
+            r"(?i)\b(api[_-]?key|token|secret|password|passwd|authorization|access[_-]?key|private[_-]?key)(\s*[:=]\s*)((?:bearer|basic)\s+)?([^\s'\"]+)",
         )
         .unwrap()
     })
 }
 
-/// 返回脱敏后的命令文本。命中值替换为其 sha256 前 12 位引用。
+/// 返回脱敏后的命令文本。命中值替换为其 sha256 前 12 位引用；Bearer/Basic 前缀保留。
 pub fn redact(cmd: &str) -> String {
     let re = secret_re();
     let mut out = String::with_capacity(cmd.len());
@@ -23,12 +23,17 @@ pub fn redact(cmd: &str) -> String {
     for cap in re.captures_iter(cmd) {
         let whole = cap.get(0).unwrap();
         let key = cap.get(1).unwrap();
-        let val = cap.get(3).unwrap();
+        let sep = cap.get(2).unwrap();
+        let scheme = cap.get(3);
+        let val = cap.get(4).unwrap();
         let mut h = Sha256::new();
         h.update(val.as_str().as_bytes());
         let digest: String = h.finalize().iter().take(6).map(|b| format!("{b:02x}")).collect();
         out.push_str(&cmd[last..key.end()]);
-        out.push_str(&cmd[key.end()..val.start()]);
+        out.push_str(&cmd[key.end()..sep.end()]);
+        if let Some(s) = scheme {
+            out.push_str(s.as_str());
+        }
         out.push_str(&format!("<redacted sha256:{digest}>"));
         last = whole.end();
     }

@@ -4,7 +4,8 @@
 version: "0.1.0"
 rules:
   # ---- 文件系统毁灭级 ----
-  - { id: rm-rf-root,        pattern: 'rm\s+(-[a-zA-Z]+\s+)*(/|/\*|\s~|\s\$HOME)(\s|$)',                          severity: critical, action: deny, note: "删除根/家目录（48k 文件事故同款）" }
+  - { id: rm-rf-root,        pattern: 'rm\s+(-[a-zA-Z]+\s+)*(\S+\s+)*(/|/\*)(\s|$)',                               severity: critical, action: deny, note: "删除根目录（48k 文件事故同款）" }
+  - { id: rm-rf-home,        pattern: 'rm\s+(-[a-zA-Z]+\s+)*(\S+\s+)*(~/?|\$HOME/?)(\s|$)',                        severity: critical, action: deny, note: "删除家目录（rm -rf ... ~/ 事故签名）" }
   - { id: rm-rf-home-parent, pattern: 'rm\s+(-[a-zA-Z]+\s+)*~/?\.\.\.?',                                           severity: critical, action: deny, note: "删除家目录上层" }
   - { id: rm-fr-star,        pattern: 'rm\s+-fr?\s+(\*|\.\*)(\s|$)',                                               severity: high,     action: deny, note: "当前目录全删" }
   - { id: find-delete,       pattern: 'find\s+.*-delete',                                                          severity: high,     action: ask }
@@ -20,7 +21,7 @@ rules:
   # ---- Git 不可逆 ----
   - { id: git-clean-f,       pattern: 'git\s+clean\s+(-[a-zA-Z]*f[a-zA-Z]*\s*)+',                                  severity: high,     action: ask, note: "清除未跟踪文件" }
   - { id: git-reset-hard,    pattern: 'git\s+reset\s+--hard',                                                      severity: high,     action: ask }
-  - { id: git-push-force,    pattern: 'git\s+push\s+.*(-f\b|--force(?!-with-lease))',                              severity: high,     action: ask }
+  - { id: git-push-force,    pattern: 'git\s+push\s+.*(-f\b|--force($|[^-]))',                                     severity: high,     action: ask }
   - { id: git-branch-d,      pattern: 'git\s+branch\s+-D',                                                         severity: medium,   action: ask }
   - { id: git-checkout-dot,  pattern: 'git\s+checkout\s+\.',                                                       severity: medium,   action: ask }
   # ---- 权限/系统级 ----

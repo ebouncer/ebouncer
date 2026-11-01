@@ -122,7 +122,7 @@ fn run(cli: Cli) -> i32 {
         Cmd::Ledger { days, data_dir } => {
             let dir = resolve_data_dir(&data_dir);
             let path = dir.join("ledger.jsonl");
-            let (evs, bad) = ledger::read_all(&path).unwrap_or_default();
+            let (evs, bad) = ledger::read_all(&path).unwrap_or_else(|_| (Vec::new(), 0));
             if evs.is_empty() {
                 eprintln!("账本为空或不存在（{}）。先跑 `ebc demo` 看效果。", path.display());
                 return 1;

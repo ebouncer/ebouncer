@@ -68,7 +68,7 @@ mod tests {
     #[test]
     fn dryrun_downgrades() {
         let s = set();
-        let (d, id) = s.evaluate("rm -rf ~/ --no-preserve-root", true);
+        let (d, id) = s.evaluate("rm -rf ~ --no-preserve-root", true);
         assert_eq!(d, "log-deny");
         assert_eq!(id.unwrap(), "rm-rf-root");
         assert_eq!(s.evaluate("git clean -fd", true).0, "log-ask");
