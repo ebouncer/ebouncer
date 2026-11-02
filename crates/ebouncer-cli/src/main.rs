@@ -8,6 +8,7 @@ use ebouncer_adapters::{
     Adapter, claude_code::ClaudeCodeAdapter, codex::CodexAdapter, dsh::DshAdapter,
 };
 use ebouncer_core::{audit, ledger, rates, rules};
+mod hook;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
@@ -76,6 +77,31 @@ enum Cmd {
     },
     /// 环境自检（平台 / 数据目录 / 宿主日志来源）
     Doctor,
+    /// 注入 shell 钩子（默认仅预览 diff，--yes 才写 rc 文件）
+    Init {
+        #[arg(long, value_enum, default_value = "bash")]
+        shell: ShellKind,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// 移除 rc 中的 eBouncer 块；--purge 清可再生状态（审计链与账本始终保留）
+    Uninstall {
+        #[arg(long)]
+        purge: bool,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+    /// 由 shell rc 块每命令调用一次：匹配规则→记审计→dry-run 提示（永不拦截、永不 exit 非 0）
+    Hook {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(clap::ValueEnum, Clone, Copy)]
+enum ShellKind {
+    Bash,
+    Zsh,
 }
 
 #[derive(clap::ValueEnum, Clone, Copy)]
@@ -434,6 +460,18 @@ fn run(cli: Cli) -> i32 {
             0
         }
 
+        Cmd::Init { shell, yes } => hook::init(&home_dir(), match shell { ShellKind::Bash => "bash", ShellKind::Zsh => "zsh" }, yes),
+
+        Cmd::Uninstall { purge, data_dir } => {
+            let dir = resolve_data_dir(&data_dir);
+            hook::uninstall(&home_dir(), &dir, purge)
+        }
+
+        Cmd::Hook { data_dir } => {
+            let dir = resolve_data_dir(&data_dir);
+            hook::hook(&dir)
+        }
+
         Cmd::Doctor => {
             println!("ebc doctor —— 环境自检（W6 补全签名/内核 BTF 检查）");
             println!("  平台: {}", std::env::consts::OS);
@@ -449,6 +487,23 @@ fn run(cli: Cli) -> i32 {
                 ("Codex 日志", home_dir().join(".codex").join("sessions")),
             ] {
                 println!("  {name}: {}", if p.exists() { "发现" } else { "未发现/未安装" });
+            }
+            for shell in ["bash", "zsh"] {
+                let rc = hook::rc_path(&home_dir(), shell);
+                let injected = std::fs::read_to_string(&rc)
+                    .map(|s| s.contains(hook::BEGIN))
+                    .unwrap_or(false);
+                println!("  {shell} 钩子: {}", if injected { "已注入" } else { "未注入（ebc init --shell {shell}）" });
+            }
+            let audit_p = dir.join("audit.jsonl");
+            if audit_p.exists() {
+                match audit::verify(&audit_p) {
+                    Ok(0) => println!("  审计链: 完好"),
+                    Ok(n) => println!("  审计链: ⛔ 第 {n} 行断链"),
+                    Err(_) => println!("  审计链: 读取失败"),
+                }
+            } else {
+                println!("  审计链: 尚无记录（钩子命中命令后生成）");
             }
             0
         }

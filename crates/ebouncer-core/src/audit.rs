@@ -39,33 +39,38 @@ fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-fn last_hash(path: &Path) -> String {
-    if !path.exists() {
-        return "0".repeat(64);
+/// 尾部读取最后一行（窗口 64KB，覆盖正常审计行）。
+fn tail_line(path: &Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    if len == 0 {
+        return None;
     }
-    let mut last = String::new();
-    if let Ok(f) = fs::File::open(path) {
-        for l in BufReader::new(f).lines().map_while(Result::ok) {
-            if !l.trim().is_empty() {
-                last = l;
-            }
-        }
+    let window = (len as usize).min(65536);
+    let mut buf = vec![0u8; window];
+    f.seek(SeekFrom::End(-(window as i64))).ok()?;
+    f.read_exact(&mut buf).ok()?;
+    // 窗口止于 EOF：取窗口内最后一条非空行即为末行
+    let s = String::from_utf8_lossy(&buf);
+    let trimmed = s.trim_end_matches(['\n', '\r']);
+    let start = trimmed.rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let last = trimmed[start..].trim();
+    if last.is_empty() {
+        None
+    } else {
+        Some(last.to_string())
     }
-    serde_json::from_str::<AuditEvent>(&last)
-        .map(|e| e.hash)
-        .unwrap_or_else(|_| "0".repeat(64))
 }
 
-fn last_seq(path: &Path) -> u64 {
-    let (mut n, _) = (0u64, ());
-    if let Ok(f) = fs::File::open(path) {
-        for l in BufReader::new(f).lines().map_while(Result::ok) {
-            if let Ok(e) = serde_json::from_str::<AuditEvent>(&l) {
-                n = n.max(e.seq);
-            }
-        }
+/// 一次尾部读取同时拿 (max_seq, last_hash)。
+pub fn tail_info(path: &Path) -> (u64, String) {
+    match path.exists().then(|| tail_line(path)).flatten() {
+        Some(l) => serde_json::from_str::<AuditEvent>(&l)
+            .map(|e| (e.seq, e.hash))
+            .unwrap_or((0, "0".repeat(64))),
+        None => (0, "0".repeat(64)),
     }
-    n
 }
 
 /// 追加一条审计事件并自动续链。数据目录 0700（Linux/WSL）。
@@ -80,8 +85,9 @@ pub fn append(path: &Path, mut ev: AuditEvent) -> std::io::Result<()> {
         #[cfg(not(unix))]
         fs::create_dir_all(dir)?;
     }
-    ev.seq = last_seq(path) + 1;
-    ev.prev_hash = last_hash(path);
+    let (seq, prev) = tail_info(path);
+    ev.seq = seq + 1;
+    ev.prev_hash = prev;
     ev.hash = compute_hash(&ev);
     let mut f = OpenOptions::new().create(true).append(true).open(path)?;
     writeln!(f, "{}", serde_json::to_string(&ev).unwrap())?;

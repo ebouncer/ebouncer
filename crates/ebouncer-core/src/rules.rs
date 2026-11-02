@@ -29,7 +29,12 @@ pub struct RuleSet {
 impl RuleSet {
     pub fn load(path: &Path) -> Result<Self, String> {
         let s = fs::read_to_string(path).map_err(|e| e.to_string())?;
-        serde_yaml::from_str(&s).map_err(|e| e.to_string())
+        Self::from_yaml_str(&s)
+    }
+
+    /// 从 YAML 文本解析（出厂内嵌规则与用户规则文件共用入口）。
+    pub fn from_yaml_str(s: &str) -> Result<Self, String> {
+        serde_yaml::from_str(s).map_err(|e| e.to_string())
     }
 
     /// 返回 (decision, matched rule_id)。decision: allow | log | ask | deny
