@@ -144,7 +144,7 @@ pub fn uninstall(home: &Path, data_dir: &Path, purge: bool) -> i32 {
 
 #[cfg(unix)]
 fn current_uid() -> u32 {
-    extern "C" {
+    unsafe extern "C" {
         fn getuid() -> u32;
     }
     unsafe { getuid() }
