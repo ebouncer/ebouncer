@@ -85,38 +85,84 @@ pub fn find_browser() -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.exists())
 }
 
+/// 路径 → file:// URL。
+/// 真机事故根因：Windows 下 canonicalize() 返回 `\\?\C:\...` verbatim 前缀，直接拼进 file://
+/// 得到 `file:////?/C:/...` 非法 URL → 浏览器打不开 → 回退打印自己的新标签页（灰块+隐私弹窗）。
+/// 故必须剥离 verbatim 前缀，并对空格/中文做百分号编码。
 fn file_url(path: &Path) -> String {
     let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let s = abs.display().to_string().replace('\\', "/");
-    if s.starts_with('/') {
-        format!("file://{s}")
-    } else {
-        format!("file:///{s}")
+    let mut s = abs.display().to_string();
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        s = rest.to_string();
+    } else if let Some(rest) = s.strip_prefix(r"\\.\") {
+        s = rest.to_string();
     }
+    s = s.replace('\\', "/");
+    let encoded = percent_encode(&s);
+    if encoded.starts_with('/') {
+        format!("file://{encoded}")
+    } else {
+        format!("file:///{encoded}")
+    }
+}
+
+/// 保守百分号编码：仅保留 URL 安全字符，其余按 UTF-8 字节转 %XX。
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b':' | b'-' | b'_' | b'.' => {
+                out.push(*b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// PDF 有效性：存在、非空壳、以 %PDF 头开始。
+fn pdf_ok(p: &Path) -> bool {
+    std::fs::read(p).map(|b| b.len() > 1024 && b.starts_with(b"%PDF")).unwrap_or(false)
 }
 
 /// HTML → PDF。浏览器缺失时返回 Err 并保留 HTML 作为降级交付物。
 pub fn html_to_pdf(html_path: &Path, pdf_path: &Path) -> Result<(), String> {
-    let browser = find_browser().ok_or_else(|| "未找到 Chrome/Edge（可设 EBC_BROWSER 指向浏览器路径；HTML 版可直接使用）".to_string())?;
-    let out = pdf_path.canonicalize().unwrap_or_else(|_| pdf_path.to_path_buf());
-    let status = Command::new(browser)
-        .args([
-            "--headless=new",
-            "--disable-gpu",
-            "--no-pdf-header-footer",
-            &format!("--print-to-pdf={}", out.display()),
-            "--virtual-time-budget=2000",
-            &file_url(html_path),
-        ])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map_err(|e| format!("启动浏览器失败：{e}"))?;
-    if !status.success() || !pdf_path.exists() {
-        let _ = std::fs::remove_file(pdf_path); // 清掉空壳文件，避免误交
-        return Err("浏览器渲染失败，已保留 HTML".to_string());
+    let browser = find_browser()
+        .ok_or_else(|| "未找到 Chrome/Edge（可设 EBC_BROWSER 指向浏览器路径；HTML 版可直接使用）".to_string())?;
+    // 独立临时 profile：否则 headless Edge 读用户真实配置，弹出"微软重视您的隐私"首启页
+    // 并被一起打印进 PDF（真机事故根因之二）。
+    let tmp_profile = std::env::temp_dir().join(format!("ebc-pdf-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp_profile);
+    let run = |flag: &str| {
+        Command::new(&browser)
+            .args([
+                flag,
+                "--disable-gpu",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-extensions",
+                &format!("--user-data-dir={}", tmp_profile.display()),
+                "--no-pdf-header-footer",
+                &format!("--print-to-pdf={}", pdf_path.display()),
+                "--virtual-time-budget=8000",
+                &file_url(html_path),
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+    };
+    let mut st = run("--headless=new").map_err(|e| format!("启动浏览器失败：{e}"))?;
+    if !st.success() || !pdf_ok(pdf_path) {
+        // 旧版内核不认识 --headless=new，回退 --headless
+        st = run("--headless").map_err(|e| format!("启动浏览器失败：{e}"))?;
     }
-    Ok(())
+    let _ = std::fs::remove_dir_all(&tmp_profile);
+    if st.success() && pdf_ok(pdf_path) {
+        Ok(())
+    } else {
+        let _ = std::fs::remove_file(pdf_path); // 清掉空壳/错误页，避免误交
+        Err("浏览器渲染失败，已保留 HTML".to_string())
+    }
 }
 
 #[cfg(test)]
@@ -172,5 +218,19 @@ mod tests {
             "CSS 花括号不平衡"
         );
         assert!(style.contains("background-image:url("), "水印声明缺失");
+    }
+    /// 回归（真机"PDF 打的是 Edge 首启页"事故）：file_url 必须处理 Windows 路径。
+    #[test]
+    fn file_url_percent_encodes_spaces_and_nonascii() {
+        // 空格与中文必须编码，冒号/斜杠保留
+        let u = file_url(Path::new("/tmp/账 单/a.html"));
+        assert!(u.starts_with("file:///tmp/"), "{u}");
+        assert!(u.contains("%E8%B4%A6"), "中文未编码：{u}");
+        assert!(u.contains("%20"), "空格未编码：{u}");
+        assert!(!u.contains(' '), "URL 残留裸空格");
+    }
+    #[test]
+    fn percent_encode_keeps_safe_chars() {
+        assert_eq!(percent_encode("C:/a b/c-d_e.f"), "C:/a%20b/c-d_e.f");
     }
 }
