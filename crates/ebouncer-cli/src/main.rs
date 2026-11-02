@@ -412,7 +412,17 @@ fn run(cli: Cli) -> i32 {
             if out {
                 let exp = dir.join("exports");
                 let _ = std::fs::create_dir_all(&exp);
-                let stem = format!("invoice-{}-{}", client, chrono::Utc::now().format("%Y%m%d"));
+                // 文件名安全化：客户名可能含空格/中文/斜杠，空白与特殊符折叠为 -
+                let safe_client: String = client
+                    .chars()
+                    .map(|c| {
+                        if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' }
+                    })
+                    .collect::<String>()
+                    .trim_matches('-')
+                    .to_string();
+                let safe_client = if safe_client.is_empty() { "client".to_string() } else { safe_client };
+                let stem = format!("invoice-{safe_client}-{}", chrono::Utc::now().format("%Y%m%d"));
                 if matches!(format, BillFmt::Pdf) {
                     let html_p = unique_path(&exp, &stem, "html");
                     if std::fs::write(&html_p, ebouncer_core::render::invoice_html(&inv)).is_err() {

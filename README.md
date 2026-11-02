@@ -17,9 +17,14 @@ Claude Code / Codex 的防护停在宿主工具层，且可以一键跳过（`EV
 ## 快速开始（v0.1，Linux / WSL）
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/ebouncer/ebouncer/main/install.sh | sh
+# 或从源码：cargo install --path crates/ebouncer-cli
+
 ebc demo            # 生成演示账本
 ebc ledger --days 7 # 看：工具 × 项目 × 客户 的花费矩阵
-ebc doctor          # 环境自检：宿主日志在不在、费率表版本
+ebc ingest          # 扫宿主日志（DSH/Claude Code/Codex），记第一笔真账
+ebc bill --client <客户名> --format pdf --out   # 给甲方开一张带明细的账单
+ebc doctor          # 环境自检：宿主日志在不在、钩子注入状态、审计链健康
 ```
 
 ## 数据都在你自己的机器上
