@@ -52,3 +52,18 @@ jobs:
           body: |
             安装：`curl -fsSL https://raw.githubusercontent.com/ebouncer/ebouncer/main/install.sh | sh`
             产物经 sha256sums 校验（checksums.txt）。cosign/SLSA 签名在 v0.3 引入。
+  install-smoke:
+    # 真 Linux 端到端：一行安装 → doctor → demo → ledger → audit-verify。
+    # 开发者机器无 WSL 时，这里就是 Linux/musl 分支的验证场；发布不过此关不算发完。
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsSL "https://raw.githubusercontent.com/ebouncer/ebouncer/${GITHUB_REF_NAME}/install.sh" | sh
+        env:
+          EBC_VERSION: ${{ github.ref_name }}
+      - name: PATH 兜底（runner 不重开 shell）
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: ebc doctor
+      - run: ebc demo
+      - run: ebc ledger --days 7
+      - run: ebc audit-verify
