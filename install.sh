@@ -43,13 +43,20 @@ if curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt" 2>/dev/null; then
 fi
 
 mkdir -p "$BIN_DIR"
+# MSYS/Git-Bash 下把目标目录导出为原生 Windows 路径再交给 tar/unzip，
+# 避免 POSIX 形如 /c/... 的路径被 MSYS 自动转换破坏（Linux 下 cygpath 不存在则原样使用）。
+to_native() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi
+}
+pkg_tmp="$tmp/pkg"
+mkdir -p "$pkg_tmp"
 case "$target" in
   *-musl)
-    tar -xzf "$tmp/$asset" -C "$tmp"
-    mv "$tmp/ebc" "$BIN_DIR/ebc" ;;
+    tar -xzf "$tmp/$asset" -C "$pkg_tmp"
+    mv "$pkg_tmp/ebc" "$BIN_DIR/ebc" ;;
   *)
-    unzip -o "$tmp/$asset" -d "$tmp" >/dev/null
-    mv "$tmp/ebc.exe" "$BIN_DIR/ebc.exe" ;;
+    unzip -o "$tmp/$asset" -d "$(to_native "$pkg_tmp")" >/dev/null
+    mv "$pkg_tmp/ebc.exe" "$BIN_DIR/ebc.exe" ;;
 esac
 chmod +x "$BIN_DIR/ebc" 2>/dev/null || true
 
