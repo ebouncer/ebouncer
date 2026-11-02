@@ -109,6 +109,18 @@ enum BillFmt {
     Table,
     Csv,
     Json,
+    Pdf,
+}
+
+/// 永不覆盖：同 stem 冲突自动加 -N 后缀。
+fn unique_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
+    let mut p = dir.join(format!("{stem}.{ext}"));
+    let mut n = 2;
+    while p.exists() {
+        p = dir.join(format!("{stem}-{n}.{ext}"));
+        n += 1;
+    }
+    p
 }
 
 fn home_dir() -> PathBuf {
@@ -385,7 +397,7 @@ fn run(cli: Cli) -> i32 {
             match format {
                 BillFmt::Json => println!("{}", inv.to_json()),
                 BillFmt::Csv => println!("{}", inv.to_csv()),
-                BillFmt::Table => {
+                BillFmt::Table | BillFmt::Pdf => {
                     println!("客户 {} · 周期 {} ~ {} · 加成 {:.0}% · 水印 {}",
                         inv.client, inv.period.from, inv.period.to, inv.markup * 100.0,
                         if inv.watermark { "是" } else { "否（试用）" });
@@ -401,18 +413,27 @@ fn run(cli: Cli) -> i32 {
                 let exp = dir.join("exports");
                 let _ = std::fs::create_dir_all(&exp);
                 let stem = format!("invoice-{}-{}", client, chrono::Utc::now().format("%Y%m%d"));
+                if matches!(format, BillFmt::Pdf) {
+                    let html_p = unique_path(&exp, &stem, "html");
+                    if std::fs::write(&html_p, ebouncer_core::render::invoice_html(&inv)).is_err() {
+                        eprintln!("HTML 渲染失败");
+                        return 1;
+                    }
+                    let pdf_p = unique_path(&exp, &stem, "pdf");
+                    match ebouncer_core::render::html_to_pdf(&html_p, &pdf_p) {
+                        Ok(_) => println!("已导出：{}\n      （源 HTML：{}）", pdf_p.display(), html_p.display()),
+                        Err(e) => {
+                            eprintln!("PDF 转换降级：{e}\n已导出：{}", html_p.display());
+                        }
+                    }
+                    return 0;
+                }
                 let (ext, body): (&str, String) = match format {
                     BillFmt::Json => ("json", inv.to_json()),
                     BillFmt::Csv => ("csv", inv.to_csv()),
-                    BillFmt::Table => ("csv", inv.to_csv()),
+                    _ => ("csv", inv.to_csv()),
                 };
-                // 永不覆盖：冲突自动加 -N 序号
-                let mut p = exp.join(format!("{stem}.{ext}"));
-                let mut n = 2;
-                while p.exists() {
-                    p = exp.join(format!("{stem}-{n}.{ext}"));
-                    n += 1;
-                }
+                let p = unique_path(&exp, &stem, ext);
                 match std::fs::write(&p, body) {
                     Ok(_) => println!("已导出：{}", p.display()),
                     Err(e) => { eprintln!("导出失败：{e}"); return 1; }

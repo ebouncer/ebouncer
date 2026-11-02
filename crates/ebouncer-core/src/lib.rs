@@ -7,6 +7,7 @@ pub mod bill;
 pub mod ledger;
 pub mod rates;
 pub mod redact;
+pub mod render;
 pub mod rules;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
