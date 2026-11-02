@@ -24,6 +24,9 @@ pub struct LedgerEvent {
     pub tokens_out: u64,
     #[serde(default)]
     pub cache_read: u64,
+    /// 缓存写入 token（DSH/Anthropic 类日志含此维度；隐式缓存厂商通常为 0）
+    #[serde(default)]
+    pub cache_write: u64,
     #[serde(default)]
     pub cost_native: f64,
     #[serde(default = "default_currency")]
@@ -85,6 +88,7 @@ mod tests {
             tokens_in: 10,
             tokens_out: 5,
             cache_read: 0,
+            cache_write: 0,
             cost_native: 0.01,
             currency: "CNY".into(),
             requests_search: 2,

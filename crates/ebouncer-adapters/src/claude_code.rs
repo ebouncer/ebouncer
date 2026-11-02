@@ -59,6 +59,10 @@ impl Adapter for ClaudeCodeAdapter {
                     .get("cache_read_input_tokens")
                     .and_then(Value::as_u64)
                     .unwrap_or_default(),
+                cache_write: usage
+                    .get("cache_creation_input_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default(),
                 cost_native: 0.0,
                 currency: "USD".into(),
                 requests_search: 0, // TODO 核验：WebSearch 工具事件出现次数→按次计数

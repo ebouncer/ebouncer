@@ -16,6 +16,7 @@
     "tokens_in": { "type": "integer", "minimum": 0 },
     "tokens_out": { "type": "integer", "minimum": 0 },
     "cache_read": { "type": "integer", "minimum": 0 },
+    "cache_write": { "type": "integer", "minimum": 0, "description": "缓存写入 token；DeepSeek 等隐式缓存厂商通常为 0" },
     "cost_native": { "type": "number", "minimum": 0, "description": "日志自带成本字段（若有）" },
     "currency": { "type": "string", "enum": ["CNY", "USD"], "default": "CNY" },
     "requests_search": { "type": "integer", "minimum": 0, "description": "Web Search 成功请求次数（按次计费维度）" },

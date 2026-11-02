@@ -2,11 +2,13 @@
 //! 宿主日志解析器。契约测试原则（D2）：每个解析器配 tests/golden/ 真实样本，
 //! 上游改版先照样本红、再适配——适配层是永续税，用测试把它钉住。
 //!
-//! ⚠️ 本模块的字段路径为待核验假设：W2 需用真实日志（~/.claude/projects、~/.codex/sessions）
-//! 脱敏后作为 golden 样本入仓，逐字段核对后删除 TODO。禁止凭记忆定契约。
+//! dsh：字段路径已用真实 session.v4.jsonl.zstd 核验（见 dsh.rs 顶部契约说明）。
+//! claude_code / codex：字段路径仍为待核验假设——用户本机未安装时，需拿到真实
+//! 样本后逐字段核对再删除 TODO，禁止凭记忆定契约。
 
 pub mod claude_code;
 pub mod codex;
+pub mod dsh;
 
 use ebouncer_core::ledger::LedgerEvent;
 

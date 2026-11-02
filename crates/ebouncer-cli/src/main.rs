@@ -4,7 +4,9 @@
 
 use chrono::{Duration, Local};
 use clap::{Parser, Subcommand};
-use ebouncer_adapters::{Adapter, claude_code::ClaudeCodeAdapter, codex::CodexAdapter};
+use ebouncer_adapters::{
+    Adapter, claude_code::ClaudeCodeAdapter, codex::CodexAdapter, dsh::DshAdapter,
+};
 use ebouncer_core::{audit, ledger, rates, rules};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
@@ -33,6 +35,9 @@ enum Cmd {
         claude_dir: Option<PathBuf>,
         #[arg(long)]
         codex_dir: Option<PathBuf>,
+        /// DSH 会话根目录（默认 ~/.dsh/sessions，递归找 session*.jsonl[.zstd]）
+        #[arg(long)]
+        dsh_dir: Option<PathBuf>,
         #[arg(long)]
         data_dir: Option<PathBuf>,
     },
@@ -61,17 +66,29 @@ fn resolve_data_dir(cli: &Option<PathBuf>) -> PathBuf {
     cli.clone().unwrap_or_else(|| home_dir().join(".ebouncer"))
 }
 
+/// 递归收集目录下的日志文件（兼容 DSH 的嵌套 session 目录与 .jsonl.zstd）。
+fn collect_logs(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            collect_logs(&p, out);
+        } else if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
+            if name.ends_with(".jsonl") || name.ends_with(".jsonl.zstd") {
+                out.push(p);
+            }
+        }
+    }
+}
+
 fn ingest_dir(root: &Path, ad: &dyn Adapter, out: &Path) -> usize {
+    let mut files = Vec::new();
+    collect_logs(root, &mut files);
     let mut n = 0usize;
-    if let Ok(rd) = std::fs::read_dir(root) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.extension().and_then(|x| x.to_str()) == Some("jsonl") {
-                for ev in ad.parse_file(&p) {
-                    if ledger::append(out, &ev).is_ok() {
-                        n += 1;
-                    }
-                }
+    for p in files {
+        for ev in ad.parse_file(&p) {
+            if ledger::append(out, &ev).is_ok() {
+                n += 1;
             }
         }
     }
@@ -104,6 +121,7 @@ fn run(cli: Cli) -> i32 {
                     tokens_in: *tin,
                     tokens_out: *tout,
                     cache_read: 0,
+                    cache_write: 0,
                     cost_native: 0.0,
                     currency: "CNY".to_string(),
                     requests_search: *rs,
@@ -128,9 +146,19 @@ fn run(cli: Cli) -> i32 {
                 return 1;
             }
             let cutoff = (Local::now() - Duration::days(days)).to_rfc3339();
+            // 聚合键含 model 与 cache_read：否则费率表无法命中，金额恒为 ¥0
+            #[derive(Default)]
+            struct Agg {
+                ti: u64,
+                to: u64,
+                cr: u64,
+                cw: u64,
+                sr: u64,
+                sf: u64,
+            }
             let mut agg: std::collections::BTreeMap<
-                (String, String, String),
-                (u64, u64, u64, u64),
+                (String, String, String, String),
+                Agg,
             > = Default::default();
             for e in &evs {
                 if e.ts < cutoff {
@@ -140,21 +168,24 @@ fn run(cli: Cli) -> i32 {
                     e.tool.clone(),
                     e.project.clone(),
                     e.client.clone().unwrap_or_else(|| "-".to_string()),
+                    e.model.clone().unwrap_or_else(|| "-".to_string()),
                 );
                 let a = agg.entry(key).or_default();
-                a.0 += e.tokens_in;
-                a.1 += e.tokens_out;
-                a.2 += e.requests_search;
-                a.3 += e.requests_fetch;
+                a.ti += e.tokens_in;
+                a.to += e.tokens_out;
+                a.cr += e.cache_read;
+                a.cw += e.cache_write;
+                a.sr += e.requests_search;
+                a.sf += e.requests_fetch;
             }
             let table = rates::load_dir(&dir.join("rates"));
-            println!("近 {days} 天花费汇总（工具 × 项目 × 客户）");
+            println!("近 {days} 天花费汇总（工具 × 项目 × 客户 × 模型）");
             println!(
-                "{:<13} {:<16} {:<18} {:>11} {:>11} {:>8} {:>7}",
-                "tool", "project", "client", "tokens_in", "tokens_out", "search*", "fetch*"
+                "{:<13} {:<16} {:<16} {:<18} {:>10} {:>9} {:>9} {:>7} {:>6} {:>8}",
+                "tool", "project", "client", "model", "tok_in", "tok_out", "cache_rd", "search*", "fetch*", "≈¥"
             );
-            let mut top: Vec<(f64, (String, String, String))> = Vec::new();
-            for (k, (ti, to, rs, rf)) in &agg {
+            let mut top: Vec<(f64, (String, String, String, String))> = Vec::new();
+            for (k, a) in &agg {
                 let est = rates::estimate(
                     &ledger::LedgerEvent {
                         ts: String::new(),
@@ -162,27 +193,28 @@ fn run(cli: Cli) -> i32 {
                         tool: k.0.clone(),
                         project: k.1.clone(),
                         client: None,
-                        model: None,
-                        tokens_in: *ti,
-                        tokens_out: *to,
-                        cache_read: 0,
+                        model: if k.3 == "-" { None } else { Some(k.3.clone()) },
+                        tokens_in: a.ti,
+                        tokens_out: a.to,
+                        cache_read: a.cr,
+                        cache_write: a.cw,
                         cost_native: 0.0,
                         currency: "CNY".to_string(),
-                        requests_search: *rs,
-                        requests_fetch: *rf,
+                        requests_search: a.sr,
+                        requests_fetch: a.sf,
                     },
                     &table,
                 );
                 top.push((est, k.clone()));
                 println!(
-                    "{:<13} {:<16} {:<18} {:>11} {:>11} {:>8} {:>7}  ≈¥{:.2}",
-                    k.0, k.1, k.2, ti, to, rs, rf, est
+                    "{:<13} {:<16} {:<16} {:<18} {:>10} {:>9} {:>9} {:>7} {:>6} {:>8.2}",
+                    k.0, k.1, k.2, k.3, a.ti, a.to, a.cr, a.sr, a.sf, est
                 );
             }
             // D8：首屏结论行
             top.sort_by(|a, b| b.0.total_cmp(&a.0));
             if let Some((c, k)) = top.first() {
-                println!("\n本月花费最大：{} / {}（客户 {}），≈¥{:.2}", k.0, k.1, k.2, c);
+                println!("\n花费最大：{} / {}（客户 {}，模型 {}），≈¥{:.2}", k.0, k.1, k.2, k.3, c);
             }
             if bad > 0 {
                 eprintln!("（跳过了 {bad} 行无法解析的记录）");
@@ -193,7 +225,7 @@ fn run(cli: Cli) -> i32 {
             0
         }
 
-        Cmd::Ingest { claude_dir, codex_dir, data_dir } => {
+        Cmd::Ingest { claude_dir, codex_dir, dsh_dir, data_dir } => {
             let out = resolve_data_dir(&data_dir).join("ledger.jsonl");
             let mut n = 0usize;
             if let Some(root) = claude_dir {
@@ -202,6 +234,15 @@ fn run(cli: Cli) -> i32 {
             }
             if let Some(root) = codex_dir {
                 let ad = CodexAdapter;
+                n += ingest_dir(&root, &ad, &out);
+            }
+            // DSH：显式传入优先，否则自动探测 ~/.dsh/sessions
+            let dsh_root = dsh_dir.or_else(|| {
+                let d = home_dir().join(".dsh").join("sessions");
+                d.exists().then_some(d)
+            });
+            if let Some(root) = dsh_root {
+                let ad = DshAdapter;
                 n += ingest_dir(&root, &ad, &out);
             }
             println!("已入账 {n} 条事件 → {}", out.display());
@@ -257,6 +298,7 @@ fn run(cli: Cli) -> i32 {
                 if dir.exists() { "已存在" } else { "未初始化（跑 ebc demo）" }
             );
             for (name, p) in [
+                ("DSH 日志", home_dir().join(".dsh").join("sessions")),
                 ("Claude Code 日志", home_dir().join(".claude").join("projects")),
                 ("Codex 日志", home_dir().join(".codex").join("sessions")),
             ] {

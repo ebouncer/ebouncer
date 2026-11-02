@@ -93,7 +93,7 @@ mod tests {
         LedgerEvent {
             ts: "2026-11-01T00:00:00Z".into(), session_id: "s".into(), tool: "codex".into(),
             project: "p".into(), client: None, model: Some("deepseek-chat".into()),
-            tokens_in: 1_000_000, tokens_out: 1_000_000, cache_read: 0,
+            tokens_in: 1_000_000, tokens_out: 1_000_000, cache_read: 0, cache_write: 0,
             cost_native: 0.0, currency: "CNY".into(),
             requests_search: 1000, requests_fetch: 0,
         }

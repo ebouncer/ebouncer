@@ -52,6 +52,7 @@ impl Adapter for CodexAdapter {
                     .get("cached_input_tokens")
                     .and_then(Value::as_u64)
                     .unwrap_or_default(),
+                cache_write: 0,
                 cost_native: 0.0,
                 currency: "CNY".into(),
                 requests_search: 0,
