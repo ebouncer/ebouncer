@@ -2,7 +2,7 @@
 //! ebc —— eBouncer CLI（W1 最小可用面：demo / ledger / ingest / audit-verify / rules-check / doctor）。
 //! 命令名刻意避开 `eb`（与 AWS EB CLI 冲突）。
 
-use chrono::{Duration, Local};
+use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
 use ebouncer_adapters::{
     Adapter, claude_code::ClaudeCodeAdapter, codex::CodexAdapter, dsh::DshAdapter,
@@ -104,7 +104,7 @@ fn run(cli: Cli) -> i32 {
     match cli.cmd {
         Cmd::Demo => {
             let path = resolve_data_dir(&None).join("ledger.jsonl");
-            let now = Local::now();
+            let now = Utc::now();
             let samples: [(&str, &str, Option<&str>, &str, u64, u64, u64, u64); 3] = [
                 ("claude-code", "acme", Some("ACME 公司"), "claude-sonnet-4-5", 4_000_000, 600_000, 0, 0),
                 ("codex", "billing", Some("ACME 计费项目"), "deepseek-chat", 2_000_000, 400_000, 2_000, 0),
@@ -145,7 +145,9 @@ fn run(cli: Cli) -> i32 {
                 eprintln!("账本为空或不存在（{}）。先跑 `ebc demo` 看效果。", path.display());
                 return 1;
             }
-            let cutoff = (Local::now() - Duration::days(days)).to_rfc3339();
+            let cutoff = Utc::now()
+                - Duration::days(days);
+            let cutoff = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
             // 聚合键含 model 与 cache_read：否则费率表无法命中，金额恒为 ¥0
             #[derive(Default)]
             struct Agg {

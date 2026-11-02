@@ -39,6 +39,7 @@ pub fn redact(cmd: &str) -> String {
 }
 
 /// 测试辅助：判断 s 是否不含 needle（避开 assert 内嵌取反符，防网页编辑器吞字符）。
+#[cfg(test)]
 fn lacks(s: &str, needle: &str) -> bool {
     !s.contains(needle)
 }
