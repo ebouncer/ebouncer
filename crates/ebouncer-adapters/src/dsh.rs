@@ -12,13 +12,23 @@
 //! - `type=="tool/call"` 的 `data.name` 中命中 search/fetch 语义的计入按次维度。
 
 use super::{Adapter, normalize_project};
+use ebouncer_core::attrib::{self, ClientMap};
 use ebouncer_core::ledger::LedgerEvent;
 use serde_json::Value;
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-pub struct DshAdapter;
+pub struct DshAdapter {
+    /// 客户归因映射表（CLI 注入；默认空 = 仅项目文件/git remote 生效）
+    pub client_map: ClientMap,
+}
+
+impl Default for DshAdapter {
+    fn default() -> Self {
+        Self { client_map: ClientMap::default() }
+    }
+}
 
 /// DSH 日志实测为「每行一个 zstd frame」的追加式文件（53 行/27 帧等），
 /// 而 ruzstd StreamingDecoder 只解单帧——必须逐帧循环。
@@ -91,6 +101,7 @@ impl Adapter for DshAdapter {
             return Vec::new();
         };
         let mut project: Option<String> = None;
+        let mut cwd_raw: Option<String> = None;
         let mut session = Self::session_from_path(path);
         let mut events: Vec<LedgerEvent> = Vec::new();
         let mut search = 0u64;
@@ -115,6 +126,7 @@ impl Adapter for DshAdapter {
                         .and_then(Value::as_str)
                         .or_else(|| v.pointer("/data/cwd").and_then(Value::as_str))
                     {
+                        cwd_raw = Some(cwd.to_string());
                         project = Some(normalize_project(cwd));
                     }
                     if let Some(id) = v
@@ -161,8 +173,14 @@ impl Adapter for DshAdapter {
         }
 
         let project = project.unwrap_or_else(|| "unknown".to_string());
+        // K2 归因链现场解析：cwd 作为"项目目录"跑 显式>项目文件>git remote
+        let client = cwd_raw
+            .as_deref()
+            .map(PathBuf::from)
+            .and_then(|dir| attrib::resolve_client(None, &dir, &self.client_map));
         for e in events.iter_mut() {
             e.project = project.clone();
+            e.client = client.clone();
         }
         // 按次计数归到会话末事件；无事件时合成一条，保证求和不丢数
         if search + fetch > 0 {
@@ -219,7 +237,7 @@ mod tests {
     #[test]
     fn parses_increment_usage_and_project() {
         let p = write_tmp("basic", GOLDEN);
-        let evs = DshAdapter.parse_file(&p);
+        let evs = DshAdapter::default().parse_file(&p);
         assert_eq!(evs.len(), 2);
         assert_eq!(evs[0].project, "billing");
         assert_eq!(evs[0].session_id, "session-abc");
@@ -234,7 +252,7 @@ mod tests {
     #[test]
     fn per_request_counts_not_double_counted() {
         let p = write_tmp("req", GOLDEN);
-        let evs = DshAdapter.parse_file(&p);
+        let evs = DshAdapter::default().parse_file(&p);
         let s: u64 = evs.iter().map(|e| e.requests_search).sum();
         let f: u64 = evs.iter().map(|e| e.requests_fetch).sum();
         assert_eq!(s, 1);
@@ -245,7 +263,7 @@ mod tests {
     #[test]
     fn handles_garbage_lines() {
         let p = write_tmp("garbage", "not json\n{}\n[1,2]\n");
-        let evs = DshAdapter.parse_file(&p);
+        let evs = DshAdapter::default().parse_file(&p);
         assert!(evs.is_empty());
         std::fs::remove_file(&p).ok();
     }
@@ -265,7 +283,7 @@ mod tests {
         }
         let p = std::env::temp_dir().join(format!("ebc-dsh-frames-{}.zstd", std::process::id()));
         std::fs::write(&p, &blob).unwrap();
-        let evs = DshAdapter.parse_file(&p);
+        let evs = DshAdapter::default().parse_file(&p);
         // 若只解首帧，这里最多得到 0~1 条事件
         assert_eq!(evs.len(), 2, "多帧文件应解析出全部 assistant 事件");
         assert_eq!(evs[0].project, "billing");

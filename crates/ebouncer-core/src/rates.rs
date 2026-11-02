@@ -60,6 +60,18 @@ fn best_entry<'a>(table: &'a [VendorRates], model: &str, ev_ts: &str) -> Option<
         .or_else(|| applicable.iter().copied().min_by_key(|v| v.effective_from.as_str()))
 }
 
+/// 返回 (模型, 事件时间) 的生效价格：模型单价与同一条目内的工具按次单价。
+/// estimate() 与 bill 分项计价共用 best_entry 的版本选择语义（effective_from ≤ ts 取最新）。
+pub fn price_for<'a>(
+    model: &str,
+    ev_ts: &str,
+    table: &'a [VendorRates],
+) -> Option<(&'a ModelRate, Option<&'a ToolRequestRate>)> {
+    let v = best_entry(table, model, ev_ts)?;
+    let mr = v.models.iter().find(|mr| model_matches(model, mr))?;
+    Some((mr, v.tool_requests.as_ref()))
+}
+
 pub fn load_dir(dir: &Path) -> Vec<VendorRates> {
     let mut out = Vec::new();
     if let Ok(rd) = fs::read_dir(dir) {
@@ -170,5 +182,13 @@ mod tests {
         let mut e = ev();
         e.ts = "2026-01-01T00:00:00Z".into();
         assert!((estimate(&e, &table) - (2.0 + 3.0 + 5.0)).abs() < 1e-9);
+    }
+    #[test]
+    fn price_for_returns_matching_entry_and_none_when_absent() {
+        let table = vec![entry("2026-09-01", 1.0, 2.0, 5.0), entry("2026-11-01", 2.0, 3.0, 8.0)];
+        let (mr, tr) = price_for("deepseek-chat", "2026-10-15T00:00:00Z", &table).unwrap();
+        assert!((mr.input_per_mtok - 1.0).abs() < 1e-9);
+        assert!((tr.unwrap().search_per_k - 5.0).abs() < 1e-9);
+        assert!(price_for("no-such-model", "2026-10-15T00:00:00Z", &table).is_none());
     }
 }

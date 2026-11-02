@@ -3,6 +3,7 @@
 
 pub mod audit;
 pub mod attrib;
+pub mod bill;
 pub mod ledger;
 pub mod rates;
 pub mod redact;

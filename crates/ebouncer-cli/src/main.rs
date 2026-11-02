@@ -21,7 +21,10 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// 用样例数据生成演示账本，跑通 ledger 全流程
-    Demo,
+    Demo {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
     /// 汇总近期账本：按工具 × 项目 × 客户
     Ledger {
         #[arg(long, default_value = "7")]
@@ -46,6 +49,26 @@ enum Cmd {
         #[arg(long)]
         data_dir: Option<PathBuf>,
     },
+    /// 按客户生成账单（CSV/JSON；invoice.pdf 进 W5）。默认 dry-run 打印，--out 落盘且永不覆盖
+    Bill {
+        #[arg(long)]
+        client: String,
+        /// 加成比例（0.2 = +20%），报进客户价用
+        #[arg(long, default_value_t = 0.0)]
+        markup: f64,
+        #[arg(long, default_value = "30")]
+        days: i64,
+        #[arg(long, value_enum, default_value = "table")]
+        format: BillFmt,
+        /// 导出到 <data_dir>/exports（文件名带客户+日期，冲突自动加序号）
+        #[arg(long)]
+        out: bool,
+        /// 本次为无水印版（前 3 次免费，之后需订阅——§6.2 次数级试用）
+        #[arg(long)]
+        trial_clean: bool,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
     /// 规则自检：对 stdin 每行命令输出 dry-run 决策
     RulesCheck {
         #[arg(long)]
@@ -53,6 +76,13 @@ enum Cmd {
     },
     /// 环境自检（平台 / 数据目录 / 宿主日志来源）
     Doctor,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy)]
+enum BillFmt {
+    Table,
+    Csv,
+    Json,
 }
 
 fn home_dir() -> PathBuf {
@@ -119,8 +149,8 @@ fn main() {
 
 fn run(cli: Cli) -> i32 {
     match cli.cmd {
-        Cmd::Demo => {
-            let path = resolve_data_dir(&None).join("ledger.jsonl");
+        Cmd::Demo { data_dir } => {
+            let path = resolve_data_dir(&data_dir).join("ledger.jsonl");
             let now = Utc::now();
             let samples: [(&str, &str, Option<&str>, &str, u64, u64, u64, u64); 3] = [
                 ("claude-code", "acme", Some("ACME 公司"), "claude-sonnet-4-5", 4_000_000, 600_000, 0, 0),
@@ -261,10 +291,96 @@ fn run(cli: Cli) -> i32 {
                 d.exists().then_some(d)
             });
             if let Some(root) = dsh_root {
-                let ad = DshAdapter;
+                let dir = resolve_data_dir(&data_dir);
+                let ad = DshAdapter {
+                    client_map: ebouncer_core::attrib::ClientMap::load(
+                        &dir.join("config").join("client_map.yaml"),
+                    ),
+                };
                 n += ingest_dir(&root, &ad, &out);
             }
             println!("已入账 {n} 条事件 → {}", out.display());
+            0
+        }
+
+        Cmd::Bill { client, markup, days, format, out, trial_clean, data_dir } => {
+            let dir = resolve_data_dir(&data_dir);
+            let path = dir.join("ledger.jsonl");
+            let (evs, _) = ledger::read_all(&path).unwrap_or_else(|_| (Vec::new(), 0));
+            if evs.is_empty() {
+                eprintln!("账本为空，先跑 ebc ingest");
+                return 1;
+            }
+            let cutoff = (chrono::Utc::now() - Duration::days(days)).to_rfc3339();
+            let cutoff = cutoff[..19].to_string();
+            let evs: Vec<_> = evs.into_iter().filter(|e| e.ts >= cutoff).collect();
+            let table = rates::load_dir(&dir.join("rates"));
+
+            // §6.2 次数级试用：前 3 张无水印，超出回落水印版并提示订阅
+            let trial_file = dir.join("trial.json");
+            let mut used: u32 = std::fs::read_to_string(&trial_file)
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|v| v.get("clean_invoices").and_then(|n| n.as_u64()))
+                .map(|n| n as u32)
+                .unwrap_or(0);
+            let mut watermark = true;
+            if trial_clean {
+                if used < 3 {
+                    watermark = false;
+                    used += 1;
+                    let _ = std::fs::create_dir_all(&dir);
+                    let _ = std::fs::write(
+                        &trial_file,
+                        format!("{{\"clean_invoices\": {used}}}"),
+                    );
+                    eprintln!("无水印试用额度：{used}/3 已用（超出后 invoice 带水印，订阅解锁不限量）");
+                } else {
+                    eprintln!("无水印额度已用完（3/3），本次带水印；订阅 Pro 解锁。");
+                }
+            }
+
+            let basis = ledger::file_sha256(&path).ok();
+            let inv = ebouncer_core::bill::build(&client, &evs, &table, markup, watermark, basis);
+            if inv.items.is_empty() {
+                eprintln!("客户 {client} 近 {days} 天无账目（检查归因：ebc ledger 里该 client 是否存在）");
+                return 1;
+            }
+            match format {
+                BillFmt::Json => println!("{}", inv.to_json()),
+                BillFmt::Csv => println!("{}", inv.to_csv()),
+                BillFmt::Table => {
+                    println!("客户 {} · 周期 {} ~ {} · 加成 {:.0}% · 水印 {}",
+                        inv.client, inv.period.from, inv.period.to, inv.markup * 100.0,
+                        if inv.watermark { "是" } else { "否（试用）" });
+                    println!("{:<13} {:<15} {:>12} {:>12} {:>12}", "tool", "category", "qty", "unit", "amount");
+                    for i in &inv.items {
+                        println!("{:<13} {:<15} {:>12} {:>12.4} {:>12.4}", i.tool, i.category, i.qty, i.unit_price_per_k_or_mtok, i.amount);
+                    }
+                    println!("合计（含加成）：¥{:.2} · 估算未含税 · 账本指纹 {:?}", inv.total, inv.data_basis.as_deref().map(|s| &s[..12]));
+                }
+            }
+            if out {
+                let exp = dir.join("exports");
+                let _ = std::fs::create_dir_all(&exp);
+                let stem = format!("invoice-{}-{}", client, chrono::Utc::now().format("%Y%m%d"));
+                let (ext, body): (&str, String) = match format {
+                    BillFmt::Json => ("json", inv.to_json()),
+                    BillFmt::Csv => ("csv", inv.to_csv()),
+                    BillFmt::Table => ("csv", inv.to_csv()),
+                };
+                // 永不覆盖：冲突自动加 -N 序号
+                let mut p = exp.join(format!("{stem}.{ext}"));
+                let mut n = 2;
+                while p.exists() {
+                    p = exp.join(format!("{stem}-{n}.{ext}"));
+                    n += 1;
+                }
+                match std::fs::write(&p, body) {
+                    Ok(_) => println!("已导出：{}", p.display()),
+                    Err(e) => { eprintln!("导出失败：{e}"); return 1; }
+                }
+            }
             0
         }
 

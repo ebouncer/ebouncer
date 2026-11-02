@@ -52,6 +52,15 @@ pub fn append(path: &Path, ev: &LedgerEvent) -> std::io::Result<()> {
     Ok(())
 }
 
+/// 账本文件内容的 sha256（invoice.data_basis 用：账单可回对原始账本）。
+pub fn file_sha256(path: &Path) -> std::io::Result<String> {
+    use sha2::{Digest, Sha256};
+    let bytes = fs::read(path)?;
+    let mut h = Sha256::new();
+    h.update(&bytes);
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
 /// 宽松读取：坏行跳过并计数返回。
 pub fn read_all(path: &Path) -> std::io::Result<(Vec<LedgerEvent>, u64)> {
     let mut out = Vec::new();
