@@ -219,6 +219,7 @@ dependencies = [
  "clap",
  "ebouncer-adapters",
  "ebouncer-core",
+ "ebouncer-rules",
  "serde",
  "serde_json",
 ]

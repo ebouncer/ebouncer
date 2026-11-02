@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 ebouncer-core = { workspace = true }
 ebouncer-adapters = { workspace = true }
+ebouncer-rules = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

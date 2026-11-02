@@ -96,6 +96,16 @@ fn resolve_data_dir(cli: &Option<PathBuf>) -> PathBuf {
     cli.clone().unwrap_or_else(|| home_dir().join(".ebouncer"))
 }
 
+/// 费率表加载：用户目录 <data>/rates 优先；为空则回退到编译进二进制的出厂表，
+/// 保证新用户装完即出真实金额，不必先手动放 yaml（旧 bug：全 ¥0）。
+fn load_rates(data_dir: &Path) -> Vec<ebouncer_core::rates::VendorRates> {
+    let t = rates::load_dir(&data_dir.join("rates"));
+    if !t.is_empty() {
+        return t;
+    }
+    rates::parse_yaml(ebouncer_rules::rates::DEEPSEEK)
+}
+
 /// 递归收集目录下的日志文件（兼容 DSH 的嵌套 session 目录与 .jsonl.zstd）。
 fn collect_logs(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
@@ -227,7 +237,7 @@ fn run(cli: Cli) -> i32 {
                 a.sr += e.requests_search;
                 a.sf += e.requests_fetch;
             }
-            let table = rates::load_dir(&dir.join("rates"));
+            let table = load_rates(&dir);
             println!("近 {days} 天花费汇总（工具 × 项目 × 客户 × 模型）");
             println!(
                 "{:<13} {:<16} {:<16} {:<18} {:>10} {:>9} {:>9} {:>7} {:>6} {:>8}",
@@ -314,7 +324,7 @@ fn run(cli: Cli) -> i32 {
             let cutoff = (chrono::Utc::now() - Duration::days(days)).to_rfc3339();
             let cutoff = cutoff[..19].to_string();
             let evs: Vec<_> = evs.into_iter().filter(|e| e.ts >= cutoff).collect();
-            let table = rates::load_dir(&dir.join("rates"));
+            let table = load_rates(&dir);
 
             // §6.2 次数级试用：前 3 张无水印，超出回落水印版并提示订阅
             let trial_file = dir.join("trial.json");
@@ -357,7 +367,8 @@ fn run(cli: Cli) -> i32 {
                     for i in &inv.items {
                         println!("{:<13} {:<15} {:>12} {:>12.4} {:>12.4}", i.tool, i.category, i.qty, i.unit_price_per_k_or_mtok, i.amount);
                     }
-                    println!("合计（含加成）：¥{:.2} · 估算未含税 · 账本指纹 {:?}", inv.total, inv.data_basis.as_deref().map(|s| &s[..12]));
+                    let basis = inv.data_basis.as_deref().unwrap_or("-");
+                    println!("合计（含加成）：¥{:.2} · 估算未含税 · 账本指纹 {}", inv.total, &basis[..basis.len().min(12)]);
                 }
             }
             if out {

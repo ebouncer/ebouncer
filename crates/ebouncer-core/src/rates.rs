@@ -72,6 +72,16 @@ pub fn price_for<'a>(
     Some((mr, v.tool_requests.as_ref()))
 }
 
+/// 解析费率 YAML（单条目或序列均可），load_dir 与出厂内嵌回退共用。
+pub fn parse_yaml(s: &str) -> Vec<VendorRates> {
+    if let Ok(vs) = serde_yaml::from_str::<Vec<VendorRates>>(s) {
+        return vs;
+    }
+    serde_yaml::from_str::<VendorRates>(s)
+        .map(|v| vec![v])
+        .unwrap_or_default()
+}
+
 pub fn load_dir(dir: &Path) -> Vec<VendorRates> {
     let mut out = Vec::new();
     if let Ok(rd) = fs::read_dir(dir) {
@@ -79,14 +89,7 @@ pub fn load_dir(dir: &Path) -> Vec<VendorRates> {
             let p = e.path();
             if p.extension().and_then(|x| x.to_str()) == Some("yaml") {
                 if let Ok(s) = fs::read_to_string(&p) {
-                    // 一个文件可含多版本条目（yaml 序列或单条目均可）
-                    if let Ok(vs) = serde_yaml::from_str::<Vec<VendorRates>>(&s) {
-                        out.extend(vs);
-                        continue;
-                    }
-                    if let Ok(v) = serde_yaml::from_str::<VendorRates>(&s) {
-                        out.push(v);
-                    }
+                    out.extend(parse_yaml(&s));
                 }
             }
         }
