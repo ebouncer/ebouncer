@@ -77,7 +77,7 @@ enum Cmd {
     },
     /// 环境自检（平台 / 数据目录 / 宿主日志来源）
     Doctor,
-    /// 注入 shell 钩子（默认仅预览 diff，--yes 才写 rc 文件）
+    /// 注入 shell 钩子（默认仅预览，--yes 才写 rc 文件）
     Init {
         #[arg(long, value_enum, default_value = "bash")]
         shell: ShellKind,
@@ -474,7 +474,13 @@ fn run(cli: Cli) -> i32 {
 
         Cmd::Doctor => {
             println!("ebc doctor —— 环境自检（W6 补全签名/内核 BTF 检查）");
-            println!("  平台: {}", std::env::consts::OS);
+            let platform = match std::env::consts::OS {
+                "windows" if std::env::var("MSYSTEM").is_ok() => {
+                    "windows (MSYS2/类Unix shell)".to_string()
+                }
+                o => o.to_string(),
+            };
+            println!("  平台: {platform}");
             let dir = resolve_data_dir(&None);
             println!(
                 "  数据目录: {} {}",
@@ -493,7 +499,14 @@ fn run(cli: Cli) -> i32 {
                 let injected = std::fs::read_to_string(&rc)
                     .map(|s| s.contains(hook::BEGIN))
                     .unwrap_or(false);
-                println!("  {shell} 钩子: {}", if injected { "已注入" } else { "未注入（ebc init --shell {shell}）" });
+                println!(
+                    "  {shell} 钩子: {}",
+                    if injected {
+                        "已注入".to_string()
+                    } else {
+                        format!("未注入（跑 ebc init --shell {shell}）")
+                    }
+                );
             }
             let audit_p = dir.join("audit.jsonl");
             if audit_p.exists() {
