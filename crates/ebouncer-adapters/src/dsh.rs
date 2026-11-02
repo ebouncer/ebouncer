@@ -20,18 +20,38 @@ use std::path::Path;
 
 pub struct DshAdapter;
 
-/// 读文件并按需解压 zstd（依据文件头 magic 0x28B52FFD 判断，不依赖扩展名）。
+/// DSH 日志实测为「每行一个 zstd frame」的追加式文件（53 行/27 帧等），
+/// 而 ruzstd StreamingDecoder 只解单帧——必须逐帧循环。
+/// 帧边界：每帧长度自描述，解完一帧后 Cursor.position() 即下一帧起点。
+const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
+
 fn read_maybe_zstd(path: &Path) -> std::io::Result<String> {
     let mut buf = Vec::new();
     File::open(path)?.read_to_end(&mut buf)?;
-    let is_zstd = buf.len() >= 4 && buf[0..4] == [0x28, 0xB5, 0x2F, 0xFD];
-    if !is_zstd {
+    if !(buf.len() >= 4 && buf[0..4] == ZSTD_MAGIC) {
         return Ok(String::from_utf8_lossy(&buf).into_owned());
     }
-    let mut dec = ruzstd::decoding::StreamingDecoder::new(&buf[..])
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
     let mut out = Vec::new();
-    dec.read_to_end(&mut out)?;
+    let mut off = 0usize;
+    loop {
+        let start = match buf[off..].windows(4).position(|w| w == ZSTD_MAGIC) {
+            Some(p) => off + p,
+            None => break,
+        };
+        let mut cur = std::io::Cursor::new(&buf[start..]);
+        let mut sd = ruzstd::decoding::StreamingDecoder::new(&mut cur)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        let mut frame = Vec::new();
+        sd.read_to_end(&mut frame)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        let (reader, _) = sd.into_parts();
+        let used = reader.position() as usize;
+        if used == 0 {
+            break;
+        }
+        out.extend(frame);
+        off = start + used;
+    }
     Ok(String::from_utf8_lossy(&out).into_owned())
 }
 
@@ -89,10 +109,19 @@ impl Adapter for DshAdapter {
 
             match ty {
                 "session" => {
-                    if let Some(cwd) = v.pointer("/data/cwd").and_then(Value::as_str) {
+                    // 真实格式 cwd/id 在顶层；data.* 作兜底以兼容早期样例
+                    if let Some(cwd) = v
+                        .get("cwd")
+                        .and_then(Value::as_str)
+                        .or_else(|| v.pointer("/data/cwd").and_then(Value::as_str))
+                    {
                         project = Some(normalize_project(cwd));
                     }
-                    if let Some(id) = v.pointer("/data/id").and_then(Value::as_str) {
+                    if let Some(id) = v
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .or_else(|| v.pointer("/data/id").and_then(Value::as_str))
+                    {
                         session = id.to_string();
                     }
                 }
@@ -218,6 +247,28 @@ mod tests {
         let p = write_tmp("garbage", "not json\n{}\n[1,2]\n");
         let evs = DshAdapter.parse_file(&p);
         assert!(evs.is_empty());
+        std::fs::remove_file(&p).ok();
+    }
+
+    /// 回归：真实 DSH 日志是「每行一个 zstd frame」（每帧含行尾换行），只解首帧会丢全部后续行。
+    #[test]
+    fn decompresses_multiple_frames() {
+        use ruzstd::encoding::{compress_to_vec, CompressionLevel};
+        let mut blob = Vec::new();
+        for line in GOLDEN.lines() {
+            let t = line.trim();
+            if t.is_empty() {
+                continue;
+            }
+            // 帧内容必须带换行，否则解压后多行 JSON 会粘连成一行
+            blob.extend(compress_to_vec(format!("{t}\n").as_bytes(), CompressionLevel::Fastest));
+        }
+        let p = std::env::temp_dir().join(format!("ebc-dsh-frames-{}.zstd", std::process::id()));
+        std::fs::write(&p, &blob).unwrap();
+        let evs = DshAdapter.parse_file(&p);
+        // 若只解首帧，这里最多得到 0~1 条事件
+        assert_eq!(evs.len(), 2, "多帧文件应解析出全部 assistant 事件");
+        assert_eq!(evs[0].project, "billing");
         std::fs::remove_file(&p).ok();
     }
 }

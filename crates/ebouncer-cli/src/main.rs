@@ -84,13 +84,30 @@ fn collect_logs(dir: &Path, out: &mut Vec<PathBuf>) {
 fn ingest_dir(root: &Path, ad: &dyn Adapter, out: &Path) -> usize {
     let mut files = Vec::new();
     collect_logs(root, &mut files);
+    // 幂等 + 防双份：DSH 迁移后同一会话在 <uuid>/ 与 session-<uuid>/ 各存一份，
+    // 且账本已有历史事件——按 session_id 去重后才入账。
+    let (existing, _) = ledger::read_all(out).unwrap_or_else(|_| (Vec::new(), 0));
+    let mut seen: std::collections::HashSet<String> =
+        existing.into_iter().map(|e| e.session_id).collect();
     let mut n = 0usize;
+    let mut dup = 0usize;
     for p in files {
-        for ev in ad.parse_file(&p) {
+        let evs = ad.parse_file(&p);
+        let Some(sid) = evs.first().map(|e| e.session_id.clone()) else {
+            continue;
+        };
+        if !seen.insert(sid) {
+            dup += evs.len();
+            continue;
+        }
+        for ev in evs {
             if ledger::append(out, &ev).is_ok() {
                 n += 1;
             }
         }
+    }
+    if dup > 0 {
+        eprintln!("跳过 {dup} 条重复事件（同会话已入账）");
     }
     n
 }
@@ -108,7 +125,7 @@ fn run(cli: Cli) -> i32 {
             let samples: [(&str, &str, Option<&str>, &str, u64, u64, u64, u64); 3] = [
                 ("claude-code", "acme", Some("ACME 公司"), "claude-sonnet-4-5", 4_000_000, 600_000, 0, 0),
                 ("codex", "billing", Some("ACME 计费项目"), "deepseek-chat", 2_000_000, 400_000, 2_000, 0),
-                ("dsh", "side-project", None, "deepseek-reasoner", 900_000, 300_000, 800, 400),
+                ("dsh", "side-project", None, "deepseek-chat", 900_000, 300_000, 800, 400),
             ];
             for (i, (tool, proj, client, model, tin, tout, rs, rf)) in samples.iter().enumerate() {
                 let ev = ledger::LedgerEvent {
