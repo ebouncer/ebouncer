@@ -1,0 +1,70 @@
+name: Beta 反馈（误拦 / 漏拦 / 兼容）
+description: 用出问题了？一条 issue 帮我们把规则库和兼容矩阵修准
+labels: ["beta-feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        误拦率和兼容问题是这个产品的命根子，你的每一条反馈都会直接进规则库修订单。
+        提单前可以先试两个逃生门：命令尾加 `#ebc:allow` 单次豁免；`EBC_DISABLE=1` 临时整体停用。
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 平台
+      options:
+        - Linux（发行版写在下面）
+        - Windows + MSYS2/Git-Bash
+        - macOS（v0.1 未正式支持）
+        - 其他
+    validations:
+      required: true
+  - type: dropdown
+    id: issue-type
+    attributes:
+      label: 问题类型
+      options:
+        - 误拦/误报（安全命令被警告了）
+        - 漏拦（危险命令没提示）
+        - 兼容问题（vim/tmux/sudo/ssh/提示符异常）
+        - 账本数字不对（token/费用）
+        - 安装/脚本问题
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: 触发问题的命令（敏感值请自行打码）
+      description: 完整原始命令行。若是密钥类误报，`ebc audit-verify` 的链上记录已自动脱敏，可直接贴。
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 你期望的行为 vs 实际发生的行为
+      placeholder: |
+        期望：不提示（这是日常构建命令）
+        实际：命中 log-deny [rm-rf-xxx]，每次 make clean 都弹
+  - type: textarea
+    id: doctor
+    attributes:
+      label: ebc doctor 输出（原样粘贴）
+      description: 平台、钩子注入状态、审计链健康都在里面。
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: shell
+    attributes:
+      label: 使用的 shell
+      options: [bash, zsh, fish（未支持，选这个说明你想用）, 其他]
+    validations:
+      required: true
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: 数据确认
+      options:
+        - label: 我已确认贴出的命令/日志中不含 API 密钥、密码、token（eBouncer 本地会脱敏，但 issue 是公开的）
+          required: true

@@ -31,6 +31,12 @@ ebc doctor          # 环境自检：宿主日志在不在、钩子注入状态�
 
 `~/.ebouncer/`（0700），纯本地 JSONL。审计链哈希可自证完整（`ebc audit-verify`）；命令中的密钥在**落盘前**替换为哈希引用，明文永不进日志（PRIVACY.md 有字段白名单）。
 
+## 参与
+
+- **Beta 招募中（30 名）**：Linux/WSL/Git-Bash/MSYS2 优先，[5 分钟上手清单见 BETA.md](BETA.md)
+- 误拦/漏拦/兼容问题走 issue 模板（结构化勾选），反馈直接进规则库
+- 安全问题先走 [SECURITY.md](SECURITY.md) 的私下披露
+
 ## License
 
 AGPL-3.0-only（开源核心永久免费；商用版/托管版另行授权）。
