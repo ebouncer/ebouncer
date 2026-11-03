@@ -1,79 +1,49 @@
-# eBouncer Beta 上手清单（5 分钟版）
+# eBouncer Beta 上手（3 分钟版）
 
-> 给 beta 用户的唯一文档。原则：每一步都有"预期输出"，对不上就是 bug，直接提 issue。
-> 两个逃生门先记住：命令尾加 `#ebc:allow` 单次豁免；`EBC_DISABLE=1` 临时整体停用。
+> 你只需要 3 条命令。每一步都有"预期"，对不上就是 bug——按 issue 模板提单，比什么新功能都值钱。
+> 逃生门：命令尾加 `#ebc:allow` 单次豁免；`EBC_DISABLE=1` 整体临时停用；`ebc uninstall` 随时摘钩子（账本与审计链保留）。
 
-## 0. 你适合参加吗
-
-- [ ] Linux / WSL / Git-Bash / MSYS2（Windows 原生暂不支持）
-- [ ] 至少用过 DSH、Claude Code、Codex 其中一个（有真实会话日志才有账可记）
-- [ ] 愿意每周提 ≥1 条 issue（误拦/漏拦/兼容都算，哪怕"没有"）
-
-## 1. 安装（30 秒）
+## 1 分钟装好
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ebouncer/ebouncer/main/install.sh | sh
-export PATH="$PATH:$HOME/.local/bin"   # 若提示找不到 ebc
-ebc --version                          # 预期：ebc 0.1.0-rc.2
 ```
 
-## 2. 先看演示，再记真账（1 分钟）
+**预期**：`✅ 已安装 .../ebc`。若提示 PATH，就照提示补一行 `export`（新开终端生效）。
+
+## 2 分钟看到自己的账
 
 ```bash
-ebc demo && ebc ledger --days 7
+ebc
 ```
-预期：三行演示账本（claude-code/codex/dsh），codex 那行 ≈¥17.20。这一步确认安装完好。
+
+就这一条。无参数的 `ebc` 是向导：自动发现你装过的 AI 编码工具（DSH / Claude Code / Codex）→ 自动把本地会话日志记成账 → 直接给"近 30 天花费矩阵 + 最烧钱的客户/项目"和下一步建议。
+
+**预期**：看到自己的真实 token 数与 ≈¥ 金额。第一次跑如果日志是旧的格式，向导会提示 `ebc rebuild`（一键重建，旧账本自动改名保留，不会丢）。
+
+## 30 秒开一张票（可选，但请试）
 
 ```bash
-ebc ingest
+cd 你的某个项目目录
+ebc tag 测试甲方        # 挂客户名；存量账目自动重新归因
+ebc bill                # 不带参数：列出可开票对象 + 下一行可复制命令
+ebc bill --client 测试甲方 --format pdf --out
 ```
-预期：`已入账 N 条事件`（N>0 说明扫到了你的真实会话；N=0 且你确实用过上述工具 → 提 issue，把你机器上 `~/.dsh` 或 `~/.claude/projects` 是否存在写清楚）。
+
+**预期**：`~/.ebouncer/exports/` 里出现 PDF（明细 + 合计 + 账本指纹 + 斜排水印）。前 3 张加 `--trial-clean` 无水印。
+
+## 4 分钟挂上哨兵（可选）
 
 ```bash
-ebc ledger --days 30
+ebc init         # 自动探测 shell，只预览要注入什么
+ebc init --yes   # 确认后注入；重开终端生效
 ```
-预期：你的真实花费矩阵。重点核对：token 量级和你直觉是否一致、`search*`/`fetch*` 列是否抓到了你的联网调用。
 
-## 3. 开一张你自己的账单（1 分钟）
+之后每条 shell 命令经过 30 条危险规则基线：命中就提示并记入防篡改审计链（**只提示，不拦截**——v0.1 是观察期）。`ebc doctor` 随时看状态，`ebc audit-verify` 验证链没被动过。
 
-```bash
-mkdir -p <你的项目目录>/.ebouncer && echo "测试客户" > <你的项目目录>/.ebouncer/client
-ebc ingest          # 重新入账才会带上客户标签（归因发生在入账时刻）
-ebc bill --client "测试客户" --days 30 --format pdf --out
-```
-预期：`~/.ebouncer/exports/invoice-*.pdf`，打开能看到明细表 + 斜排水印。
-**beta 任务①**：把这张 PDF（金额随意）发到 issue #1 评论区，让我们看看"发给甲方的第一张票"长什么样。
+## beta 任务（二选一即可）
 
-## 4. 开启命令观察（1 分钟）
+- **A**：正常用终端 3~5 天。任何"不该弹的弹了"（误拦）、"vim/tmux/sudo 不对劲"（兼容）、"数字和我直觉差太多"（账目），走 issue 模板；
+- **B**：真的用 `ebc bill --format pdf` 给甲方/自己开一张票，把感受发 issue #1。
 
-```bash
-ebc init --shell zsh        # 或 bash：先看预览
-ebc init --shell zsh --yes  # 确认后注入
-# 重开终端
-```
-测试：
-```bash
-mkdir -p /tmp/ebc-test && git init -q /tmp/ebc-test && cd /tmp/ebc-test
-git clean -fd
-```
-预期：命令照常执行，出现 `⚠️ eBouncer(dry-run) 命中 log-ask [git-clean-f]` 提示（bash 下延迟一拍到下一提示符属正常）。
-```bash
-ebc doctor && ebc audit-verify
-```
-预期：钩子"已注入"、审计链"完好"。
-
-**beta 任务②**：正常用你的终端 3~5 天（vim/tmux/ssh/sudo/构建命令都照常跑）。任何"不该弹的弹了"（误拦）或"交互程序不对劲"（兼容），按 issue 模板提单——这类数据是规则库和兼容矩阵的原料，比新功能值钱。
-
-## 5. 卸载与数据
-
-```bash
-ebc uninstall          # 只摘 rc 钩子；账本/审计链/导出全部保留
-ebc uninstall --purge  # 连可再生状态一起清（ledger/exports 仍在）
-```
-真删证据需要你自己 `rm -rf ~/.ebouncer`——故意不给开关，卸载不应销毁审计。
-
-## 反馈约定
-
-- 一切问题走 issue 模板（误拦/漏拦/兼容/数字不对/安装，结构化勾选）；
-- 贴命令前确认无密钥（eBouncer 本地自动脱敏，但 issue 是公开的）；
-- 每周三我发一次"本周规则库变更"，你的误拦报告被修掉会 @ 你。
+误报数据是规则库的命根子：Anthropic 的数据显示人类只拦得住 13.6% 的危险命令，所以拦截上线前，我们必须先把误报磨到接近 0。

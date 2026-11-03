@@ -14,18 +14,20 @@
 
 Claude Code / Codex 的防护停在宿主工具层，且可以一键跳过（`EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS`）。eBouncer 做三件宿主做不到的事：**跨工具合并账本、按客户开票、命令级留痕与拦截**。
 
-## 快速开始（v0.1，Linux / WSL）
+## 快速开始（Linux / WSL / Git-Bash / MSYS2）
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ebouncer/ebouncer/main/install.sh | sh
-# 或从源码：cargo install --path crates/ebouncer-cli
 
-ebc demo            # 生成演示账本
-ebc ledger --days 7 # 看：工具 × 项目 × 客户 的花费矩阵
-ebc ingest          # 扫宿主日志（DSH/Claude Code/Codex），记第一笔真账
-ebc bill --client <客户名> --format pdf --out   # 给甲方开一张带明细的账单
-ebc doctor          # 环境自检：宿主日志在不在、钩子注入状态、审计链健康
+ebc                     # 就这一条：向导自动发现宿主 → 记真实账 → 给花费矩阵
+ebc demo                # 纯内存演示效果，不写任何文件
+ebc tag 客户名          # 在项目目录里给费用挂客户，存量账目自动重新归因
+ebc bill                # 无参数：列出可开票对象；--client X --format pdf --out 出账单
+ebc init --yes          # 危险命令观察钩子（dry-run：提示+审计，不拦截；ebc init 可先预览）
+ebc doctor              # 环境体检
 ```
+
+完整上手见 [BETA.md](BETA.md)，能力边界见 [ROADMAP.md](ROADMAP.md)。
 
 ## 数据都在你自己的机器上
 

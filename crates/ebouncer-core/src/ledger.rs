@@ -82,6 +82,21 @@ pub fn read_all(path: &Path) -> std::io::Result<(Vec<LedgerEvent>, u64)> {
     Ok((out, bad))
 }
 
+/// 原子重写整个账本（ebc tag 重新归因用）：写临时文件后 rename 替换。
+pub fn rewrite(path: &Path, evs: &[LedgerEvent]) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("jsonl.tmp");
+    let mut body = String::new();
+    for e in evs {
+        body.push_str(&serde_json::to_string(e)?);
+        body.push('\n');
+    }
+    fs::write(&tmp, body)?;
+    fs::rename(&tmp, path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

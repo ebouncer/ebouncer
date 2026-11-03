@@ -84,6 +84,26 @@ fn is_search_or_fetch(name: &str) -> Option<&'static str> {
     }
 }
 
+/// 一条纯按次事件（token 全 0，仅 requests_* 计数），tool/call 分支用。
+fn blank_event(session: &str, time_ms: Option<u64>) -> LedgerEvent {
+    LedgerEvent {
+        ts: time_ms.map(ts_from_ms).unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string()),
+        session_id: session.to_string(),
+        tool: "dsh".to_string(),
+        project: String::new(),
+        client: None,
+        model: None,
+        tokens_in: 0,
+        tokens_out: 0,
+        cache_read: 0,
+        cache_write: 0,
+        cost_native: 0.0,
+        currency: "CNY".to_string(),
+        requests_search: 0,
+        requests_fetch: 0,
+    }
+}
+
 impl DshAdapter {
     /// 从路径解析出会话 id（供无 session 头时兜底）。
     fn session_from_path(path: &Path) -> String {
@@ -104,8 +124,7 @@ impl Adapter for DshAdapter {
         let mut cwd_raw: Option<String> = None;
         let mut session = Self::session_from_path(path);
         let mut events: Vec<LedgerEvent> = Vec::new();
-        let mut search = 0u64;
-        let mut fetch = 0u64;
+        let mut call_seq = 0u64;
 
         for line in text.lines() {
             let line = line.trim();
@@ -139,10 +158,17 @@ impl Adapter for DshAdapter {
                 }
                 "tool/call" => {
                     if let Some(name) = v.pointer("/data/name").and_then(Value::as_str) {
-                        match is_search_or_fetch(name) {
-                            Some("search") => search += 1,
-                            Some("fetch") => fetch += 1,
-                            _ => {}
+                        // 每个联网调用生成一条独立按次事件（ts 带 seq 保证幂等键唯一，
+                        // 会话续写后的新增调用能被 ingest 增量捕获）
+                        if let Some(kind) = is_search_or_fetch(name) {
+                            call_seq += 1;
+                            let mut ev = blank_event(&session, time_ms);
+                            match kind {
+                                "search" => ev.requests_search = 1,
+                                _ => ev.requests_fetch = 1,
+                            }
+                            ev.session_id = format!("{session}#{call_seq}");
+                            events.push(ev);
                         }
                     }
                 }
@@ -182,30 +208,6 @@ impl Adapter for DshAdapter {
             e.project = project.clone();
             e.client = client.clone();
         }
-        // 按次计数归到会话末事件；无事件时合成一条，保证求和不丢数
-        if search + fetch > 0 {
-            if let Some(last) = events.last_mut() {
-                last.requests_search += search;
-                last.requests_fetch += fetch;
-            } else {
-                events.push(LedgerEvent {
-                    ts: "1970-01-01T00:00:00Z".to_string(),
-                    session_id: session,
-                    tool: "dsh".to_string(),
-                    project,
-                    client: None,
-                    model: None,
-                    tokens_in: 0,
-                    tokens_out: 0,
-                    cache_read: 0,
-                    cache_write: 0,
-                    cost_native: 0.0,
-                    currency: "CNY".to_string(),
-                    requests_search: search,
-                    requests_fetch: fetch,
-                });
-            }
-        }
         events
     }
 }
@@ -238,7 +240,8 @@ mod tests {
     fn parses_increment_usage_and_project() {
         let p = write_tmp("basic", GOLDEN);
         let evs = DshAdapter::default().parse_file(&p);
-        assert_eq!(evs.len(), 2);
+        // 2 条 assistant + 2 条按次（websearch/fetch_url）
+        assert_eq!(evs.len(), 4);
         assert_eq!(evs[0].project, "billing");
         assert_eq!(evs[0].session_id, "session-abc");
         assert_eq!(evs[0].model.as_deref(), Some("deepseek-flash"));
@@ -284,8 +287,8 @@ mod tests {
         let p = std::env::temp_dir().join(format!("ebc-dsh-frames-{}.zstd", std::process::id()));
         std::fs::write(&p, &blob).unwrap();
         let evs = DshAdapter::default().parse_file(&p);
-        // 若只解首帧，这里最多得到 0~1 条事件
-        assert_eq!(evs.len(), 2, "多帧文件应解析出全部 assistant 事件");
+        // 若只解首帧，这里最多得到 0~1 条事件；4 = 2 assistant + 2 按次
+        assert_eq!(evs.len(), 4, "多帧文件应解析出全部事件");
         assert_eq!(evs[0].project, "billing");
         std::fs::remove_file(&p).ok();
     }
