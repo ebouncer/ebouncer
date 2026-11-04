@@ -1,8 +1,8 @@
 # eBouncer
 
-> The OS-level bouncer for AI coding agents. —— 给你的 AI 编码代理请一位操作系统级的保安。
+> 跨工具的 AI 花费账本与审计证据层。 —— 你雇了三个 AI 代理，得有一本共同的账。
 
-**状态：v0.1 早期开发（dry-run 阶段）。** 当前能力：跨工具 AI 花费账本（ledger）、按客户归因出账（bill）、危险命令 dry-run 观察。拦截、内核探针、Shadow Vault 恢复在路线图上（见 ROADMAP）。
+**状态：v0.1 早期开发（dry-run 阶段）。** 当前能力：跨工具 AI 花费账本（ledger）、按客户归因出账（bill）、危险命令 dry-run 观察（仅交互式 shell）。宿主原生 hook 适配、内核探针、Shadow Vault 恢复在路线图上（见 ROADMAP）。
 
 ## 为什么（Why now）
 
@@ -12,7 +12,9 @@
 - Anthropic 自己的测试：人类只拦得住 13.6% 的危险命令，自动分类器 89%——**拦不住是常态**。
 - 2026-11-01 起：DeepSeek Search/Fetch 按次计费——AI 账单从"纯 token"变成"token + 工具按次"，**没人替你记这本账**。
 
-Claude Code / Codex 的防护停在宿主工具层，且可以一键跳过（`EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS`）。eBouncer 做三件宿主做不到的事：**跨工具合并账本、按客户开票、命令级留痕与拦截**。
+Claude Code / Codex / Cursor 现在都自带 hook，能在工具调用层拦截——但每家一套配置、只管自己，用户态配置还能被 agent 改掉。eBouncer 不重复造这层拦截，而是补宿主不做的那层：**跨工具合并账本、按客户归因开票、审计证据可携带**——以及 v0.2 的"一份策略分发到多家宿主"。
+
+> **能力边界（v0.1）**：`ebc init` 注入的是 shell 钩子，只覆盖**人在交互式终端里敲的命令**；agent 通过 `bash -c` 起的命令不经过它（宿主原生 hook 适配在 v0.2）。审计链提供"篡改可发现"（含尾部截断检测），不是"不可篡改"：同一 UID 下 agent 可以改 rc、删 checkpoint、重算哈希；真正的内核级强制在 v0.3（eBPF/LSM）。
 
 ## 快速开始（Linux / WSL / Git-Bash / MSYS2）
 
@@ -31,7 +33,7 @@ ebc doctor              # 环境体检
 
 ## 数据都在你自己的机器上
 
-`~/.ebouncer/`（0700），纯本地 JSONL。审计链哈希可自证完整（`ebc audit-verify`）；命令中的密钥在**落盘前**替换为哈希引用，明文永不进日志（PRIVACY.md 有字段白名单）。
+`~/.ebouncer/`（0700），纯本地 JSONL。审计链 = 哈希链 + 尾部 checkpoint（`ebc audit-verify` 能发现断链、删尾部、删整文件；同 UID 可同步改写，所以是"篡改可发现"而非"不可篡改"）；命令中的密钥在**落盘前**替换为哈希引用，明文永不进日志（PRIVACY.md 有字段白名单）。
 
 ## 参与
 

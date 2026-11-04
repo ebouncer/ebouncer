@@ -10,7 +10,11 @@
 - **账单价格快照（可复现）**：`ebc bill` 把本单实际命中的费率条目原文写进 `rates_snapshot`，并对快照取 sha256 写入 `rates_fingerprint`；表格/CSV/PDF 页脚都带指纹，CSV/JSON 可回查条目。费率表日后增删版本也不影响已开账单的金额与依据；同一账本 + 同一费率表重开账单指纹一致（新增回归测试）。
 - **缓存写入（cache_write）计价**：`ModelRate` 新增 `cache_write_per_mtok`（缺省 0）。此前 cache_write 只记量不计价；配置单价后按 token 计费并随高峰/空闲价档折算，账单/CSV/JSON 单列 `cache_write` 科目（invoice schema 枚举已补）。DeepSeek 出厂表保持 0——官方不对写缓存单独收费，写入已含在"缓存未命中"输入价内，填价会重复计费。
 
+### 变更
+- **定位纠正（外部评审反馈）**：README/BETA/SECURITY 不再声称"宿主做不到命令级拦截/留痕"——Claude Code / Codex / Cursor 均已自带 hooks，且支持托管配置锁定。现在明确：v0.1 的 shell 钩子只覆盖**交互式终端里人敲的命令**，agent 的 `bash -c` 不经过；文本规则可被 `python -c`/变量拼接/`curl|sh` 绕过；同一 UID 下审计只能"可发现"、不能"不可篡改"。差异化改为跨工具账本/开票/证据可携带，宿主原生 hook 适配排进 v0.2。
+
 ### 修复
+- **审计链尾部截断检测**：`audit-verify` 此前只校验链内 `prev_hash`，删掉最后 N 条仍报"完好"（2026-11-04 实测）。现在每次 append 原子更新 `audit.head` checkpoint（seq + hash），校验时对比：删尾部、删整文件、替换末条都会报"被截断"（退出码 2）；checkpoint 缺失时显式降级提示"无法检测截断"，不假装校验过。新增 4 条回归测试。
 - **跨调价窗口的金额算错**：`ebc ledger` / 向导 / `ebc bill` 客户列表此前用空时间戳为整行估价，导致聚合行一律落到最早费率版本；账单又按窗口首事件时间锁价，同一客户跨调价时两个口径还会互相矛盾。现在三方统一为**逐事件**选择生效费率版本再累加，账单按费率条目拆行并各自标注 `price_source`（厂商 + 生效日）。新增 3 条回归测试（聚合计价、账单拆行、账单合计）。
 - **版本先后按字符串比较**：`2026-11-01T09:00:00+08:00` 这类带偏移的版本与事件时间混排时字典序≠时间先后。现在优先解析为时间点比较，解析失败才回退字典序；纯日期（`YYYY-MM-DD`）按 UTC 00:00 处理。新增偏移场景回归测试。
 - **账本首行带 UTF-8 BOM 时被静默丢弃**：`ledger::read_all` 现在剥离 BOM，账单不再因此少算一笔；新增回归测试。
@@ -23,12 +27,15 @@
 - **ebc ledger**：跨工具 AI 花费账本。DSH 已用真实日志验证（多帧 zstd、会话去重）；Claude Code / Codex 契约经上游源码与 issue 区核验（含 Codex token_count 重发的重复计费规避）。
 - **ebc ingest**：递归扫描宿主日志目录入账，K2 优先级客户归因（显式 > 项目 `.ebouncer/client` > git remote 映射）。
 - **ebc bill**：按客户出账（table/csv/json/pdf）；markup 加成、估算口径与账本指纹随单；免费版前 3 张无水印（§6.2 次数级试用）；导出永不覆盖。
-- **ebc init / hook / uninstall**：shell 命令防火墙（dry-run）。zsh preexec / bash PROMPT_COMMAND 注入（预览确认制、BEGIN/END 幂等块）；30 条危险命令出厂基线；命中命令落盘前脱敏（D3）写入 O(1) 哈希审计链；任何内部失败静默放行（fail-open）；卸载保留证据链。
+- **ebc init / hook / uninstall**：shell 级命令防火墙（dry-run，仅覆盖交互式终端）。zsh preexec / bash PROMPT_COMMAND 注入（预览确认制、BEGIN/END 幂等块）；30 条危险命令出厂基线；命中命令落盘前脱敏（D3）写入哈希审计链 + `audit.head` 尾部锚点（可发现截断）；任何内部失败静默放行（fail-open）；卸载保留证据链。
 - **ebc doctor / audit-verify / demo / rules-check**：环境自检、审计链校验、样例账本、规则干跑。
 - **费率表**：按事件时间选生效版本（厂商调价不改历史账本），版本内再按事件本地时间落到高峰/空闲价档（2026-11-04 官方定价页复核）；出厂内嵌表兜底；DeepSeek 时段价 + Search/Fetch 按次价（2026-11-02 官方定价页核验）。
 - **发布基建**：install.sh（纯用户态、sha256 校验）、GitHub Actions release（Linux musl 静态 + Windows zip）。
 
 ### 已知限制
+- 命令钩子只覆盖**交互式终端**：agent 用 `bash -c` 执行的命令不经过；宿主原生 hook（Claude Code PreToolUse / Codex hooks）适配在 v0.2。
+- 审计链同 UID 可伪造：checkpoint 与审计文件同权限，同时改写并重算链可绕过；只能发现"只删尾部/只改正文"，外部锚点在 v0.2。
+- 规则是文本匹配，`python -c`、变量拼接、`curl | sh` 等可绕过；不是沙箱。
 - Windows 原生钩子未支持（WSL 内可用）；macOS 在 v0.5。
 - PDF 渲染依赖本机 Chrome/Edge，缺失时自动降级为 HTML 交付。
 - 中国法定节假日需在费率表 `holiday_dates` 手工列出（无法本地推导）；未列出时假日按高峰价，略微高估。

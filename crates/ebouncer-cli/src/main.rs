@@ -657,8 +657,27 @@ fn run(cmd: Cmd) -> i32 {
         Cmd::AuditVerify { data_dir } => {
             let p = resolve_data_dir(&data_dir).join("audit.jsonl");
             match audit::verify(&p) {
-                Ok(0) => { println!("审计链完好"); 0 }
-                Ok(line) => { eprintln!("第 {line} 行断链——审计可能被篡改"); 2 }
+                Ok(r) if r.is_ok() => {
+                    if r.checkpoint_checked {
+                        println!("审计链完好（{} 条，checkpoint 已校验）", r.lines);
+                    } else {
+                        println!(
+                            "审计链完好（{} 条；无 checkpoint，无法检测尾部截断——下次命中命令后自动生成）",
+                            r.lines
+                        );
+                    }
+                    0
+                }
+                Ok(r) => {
+                    if let Some((expected, found)) = r.truncated {
+                        eprintln!(
+                            "审计链被截断：checkpoint 记录 {expected} 条，文件只有 {found} 条——尾部记录被删"
+                        );
+                    } else {
+                        eprintln!("第 {} 行断链——审计可能被篡改", r.broken_at);
+                    }
+                    2
+                }
                 Err(e) => { eprintln!("校验失败：{e}"); 1 }
             }
         }
@@ -718,8 +737,16 @@ fn run(cmd: Cmd) -> i32 {
             let audit_p = dir.join("audit.jsonl");
             if audit_p.exists() {
                 match audit::verify(&audit_p) {
-                    Ok(0) => println!("  审计链: 完好"),
-                    Ok(n) => println!("  审计链: ⛔ 第 {n} 行断链"),
+                    Ok(r) if r.is_ok() => println!(
+                        "  审计链: 完好{}",
+                        if r.checkpoint_checked { "（checkpoint 已校验）" } else { "（无 checkpoint：检测不了尾部截断）" }
+                    ),
+                    Ok(r) => match r.truncated {
+                        Some((expected, found)) => {
+                            println!("  审计链: ⛔ 尾部截断（checkpoint {expected} 条 / 文件 {found} 条）")
+                        }
+                        None => println!("  审计链: ⛔ 第 {} 行断链", r.broken_at),
+                    },
                     Err(_) => println!("  审计链: 读取失败"),
                 }
             } else {

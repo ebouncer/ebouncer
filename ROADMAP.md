@@ -3,11 +3,13 @@
 ## v0.1（当前，2026-11）—— 记账与开票闭环
 - [x] 跨工具账本：DSH（真实日志验证）/ Claude Code / Codex（契约源码级核验）
 - [x] 客户归因与账单：`ebc tag` / `ebc bill`（table/csv/json/pdf，markup，3 张无水印试用）
-- [x] 命令防火墙 dry-run：`ebc init` 注入 shell 钩子，命中规则落防篡改审计链（落盘前脱敏）
+- [x] 命令防火墙 dry-run（shell 级）：`ebc init` 注入交互式 shell 钩子，命中规则落审计链（落盘前脱敏）+ 尾部 checkpoint（截断可发现）
 - [x] 费率表按事件时间选生效版本（厂商调价，历史账本零迁移）
 - [x] 一行安装 + CI/发布流水线（Linux musl 静态 / Windows，install-smoke 端到端）
 
 ## v0.2 —— 误报校准与恢复能力
+- [ ] 宿主原生 hook 适配：`ebc init --host claude|codex` 写 PreToolUse（dry-run / enforce 两档），并输出托管配置模板（agent 改不掉的那层）
+- [ ] 审计外部锚点：checkpoint 定期归档到独立介质/远端只写存储（对抗同 UID 同步改写）
 - [ ] 误报率数据驱动的规则库校准（beta 反馈 → 每周规则快照）
 - [ ] Shadow Vault：agent 删不掉的影子快照 + `ebc restore`（变更前自动留版本）
 - [x] 高峰/空闲时段化计价（2026-11 提前于 v0.1 完成，按事件本地时间取价档）；更多厂商费率表

@@ -8,6 +8,7 @@
 |---|---|---|
 | ledger.jsonl | AI 工具的 token 用量、模型名、项目名、客户归因、工具按次请求数 | 不含 prompt 正文、不含代码内容 |
 | audit.jsonl | 命令文本、uid/tty、时间戳、规则命中与决策 | secret 模式（API_KEY=/token=/Bearer 等）的值**落盘前替换为 sha256 引用**，明文永不写入 |
+| audit.head | 审计链尾部锚点：最后一条的 seq + hash（用于发现截断） | 不含命令内容 |
 | rates/、config/ | 费率表、客户映射 | 无用户内容 |
 
 ## 不做什么
