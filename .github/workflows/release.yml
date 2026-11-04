@@ -63,12 +63,26 @@ jobs:
       - name: 下载安装脚本（不要 pipe，避免 curl 失败被 sh 吞掉）
         run: curl -fsSL --retry 6 --retry-delay 3 --retry-all-errors -o /tmp/install.sh "https://raw.githubusercontent.com/ebouncer/ebouncer/${GITHUB_REF_NAME}/install.sh"
       - name: 安装（资产刚上传，CDN 可能延迟）
+        id: install
+        continue-on-error: true
         run: |
-          set -eu
+          set -u
           sleep 10
-          sh /tmp/install.sh
+          sh -x /tmp/install.sh > /tmp/install.out 2>&1
         env:
           EBC_VERSION: ${{ github.ref_name }}
+      - name: 安装失败诊断（把关键行写进 annotation，公开仓库也能看到）
+        if: steps.install.outcome == 'failure'
+        run: |
+          {
+            echo "install.sh exit != 0"
+            tail -n 40 /tmp/install.out
+            echo "PATH=$PATH"
+            ls -l "$HOME/.local/bin" 2>&1 || true
+            "$HOME/.local/bin/ebc" --version 2>&1 || true
+          } > /tmp/diag.txt
+          while IFS= read -r line; do echo "::error::$line"; done < /tmp/diag.txt
+          exit 1
       - name: PATH 兜底（runner 不重开 shell）
         run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: ebc doctor
