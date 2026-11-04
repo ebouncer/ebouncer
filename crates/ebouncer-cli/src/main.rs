@@ -11,7 +11,7 @@ use ebouncer_adapters::{
     normalize_project, Adapter, claude_code::ClaudeCodeAdapter, codex::CodexAdapter,
     dsh::DshAdapter,
 };
-use ebouncer_core::{audit, ledger, rates, rules};
+use ebouncer_core::{audit, bundle, ledger, rates, rules};
 mod hook;
 use std::collections::{BTreeMap, HashSet};
 use std::io::BufRead;
@@ -78,6 +78,22 @@ enum Cmd {
         #[arg(long)]
         data_dir: Option<PathBuf>,
     },
+    /// 生成可携带证据包（账单 + 账本切片 + 费率快照；可含审计链）
+    Bundle {
+        #[arg(long)]
+        client: String,
+        #[arg(long, default_value = "30")]
+        days: i64,
+        #[arg(long, default_value_t = 0.0)]
+        markup: f64,
+        /// 附带审计链（命令文本已脱敏；默认不带）
+        #[arg(long)]
+        with_audit: bool,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+    /// 验证证据包：哈希 + 账单复算 + 费率指纹（+ 审计链）
+    VerifyBundle { file: PathBuf },
     /// 审计链完整性校验
     AuditVerify {
         #[arg(long)]
@@ -712,6 +728,95 @@ fn run(cmd: Cmd) -> i32 {
                 }
             }
             0
+        }
+
+        Cmd::Bundle { client, days, markup, with_audit, data_dir } => {
+            let dir = resolve_data_dir(&data_dir);
+            let path = dir.join("ledger.jsonl");
+            let (evs, bad) = ledger::read_all(&path).unwrap_or_else(|_| (Vec::new(), 0));
+            if evs.is_empty() {
+                eprintln!("账本为空，先跑 ebc ingest");
+                return 1;
+            }
+            if bad > 0 {
+                eprintln!("（跳过了 {bad} 行无法解析的记录）");
+            }
+            let cutoff = parse_cutoff(days);
+            let evs: Vec<_> = evs
+                .into_iter()
+                .filter(|e| ts_is_valid(&e.ts) && e.ts >= cutoff)
+                .collect();
+            let n_client = evs.iter().filter(|e| e.client.as_deref() == Some(client.as_str())).count();
+            let table = load_rates(&dir);
+            let basis = ledger::file_sha256(&path).ok();
+            let req = bundle::BundleRequest {
+                client: &client,
+                events: &evs,
+                table: &table,
+                markup,
+                watermark: true,
+                data_basis: basis,
+                audit_dir: with_audit.then_some(dir.as_path()),
+                ebc_version: env!("CARGO_PKG_VERSION"),
+            };
+            let (bytes, manifest) = match bundle::create(&req) {
+                Ok(v) => v,
+                Err(e) => { eprintln!("生成证据包失败：{e}"); return 1; }
+            };
+            let exp = dir.join("exports");
+            let _ = std::fs::create_dir_all(&exp);
+            let safe: String = client
+                .chars()
+                .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+                .collect::<String>()
+                .trim_matches('-')
+                .to_string();
+            let safe = if safe.is_empty() { "client".to_string() } else { safe };
+            let stem = format!("{safe}-{}", Utc::now().format("%Y%m%d"));
+            let out = unique_path(&exp, &stem, "ebc.zip");
+            if let Err(e) = std::fs::write(&out, &bytes) {
+                eprintln!("写证据包失败：{e}");
+                return 1;
+            }
+            println!("证据包：{}（{} 字节）", out.display(), bytes.len());
+            println!(
+                "客户 {} · {} · {} 条账目 · 费率指纹 {}",
+                manifest.client,
+                money(&manifest.currency, manifest.invoice_total),
+                n_client,
+                &manifest.rates_fingerprint[..manifest.rates_fingerprint.len().min(12)]
+            );
+            if manifest.audit_checked {
+                println!("已附带审计链（默认不包含；仅本次 --with-audit）");
+            }
+            println!("验证：ebc verify-bundle \"{}\"", out.display());
+            0
+        }
+
+        Cmd::VerifyBundle { file } => {
+            let bytes = match std::fs::read(&file) {
+                Ok(b) => b,
+                Err(e) => { eprintln!("读取失败：{e}"); return 1; }
+            };
+            match bundle::verify_bytes(&bytes) {
+                Ok(r) => {
+                    println!(
+                        "✅ 证据包完整：客户 {} · {} · {} 条事件",
+                        r.client,
+                        money(&r.currency, r.total),
+                        r.lines
+                    );
+                    println!(
+                        "   sha256 清单、账单复算、费率指纹均已校验{}",
+                        if r.audit_checked { "；审计链已校验" } else { "" }
+                    );
+                    for w in &r.warnings {
+                        println!("   注意：{w}");
+                    }
+                    0
+                }
+                Err(e) => { eprintln!("❌ 验证失败：{e}"); 1 }
+            }
         }
 
         Cmd::AuditVerify { data_dir } => {

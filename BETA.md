@@ -32,6 +32,15 @@ ebc bill --client 测试甲方 --format pdf --out
 
 **预期**：`~/.ebouncer/exports/` 里出现 PDF（明细 + 合计 + 账本指纹 + 斜排水印）。前 3 张加 `--trial-clean` 无水印。
 
+## 30 秒出一份可验证证据包
+
+```bash
+ebc bundle --client 测试甲方        # → ~/.ebouncer/exports/测试甲方-YYYYMMDD.ebc.zip
+ebc verify-bundle ~/.ebouncer/exports/测试甲方-*.ebc.zip
+```
+
+**预期**：`✅ 证据包完整 … sha256 清单、账单复算、费率指纹均已校验`。把 zip 发给客户：解压后 `sha256sum -c SHA256SUMS` 能验文件未被改；装了 eBouncer 的一方还能用包内账本与费率**重算金额**。默认不含审计链，需要时加 `--with-audit`。
+
 ## 4 分钟挂上哨兵（可选）
 
 ```bash

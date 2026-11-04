@@ -9,6 +9,7 @@
 - [x] 一行安装 + CI/发布流水线（Linux musl 静态 / Windows，install-smoke 端到端）
 
 ## v0.2 —— 误报校准与恢复能力
+- [x] 可携带证据包 + 离线校验：`ebc bundle` / `ebc verify-bundle`（2026-11 提前完成）
 - [ ] 宿主原生 hook 适配：`ebc init --host claude|codex` 写 PreToolUse（dry-run / enforce 两档），并输出托管配置模板（agent 改不掉的那层）
 - [ ] 审计外部锚点：checkpoint 定期归档到独立介质/远端只写存储（对抗同 UID 同步改写）
 - [ ] 误报率数据驱动的规则库校准（beta 反馈 → 每周规则快照）

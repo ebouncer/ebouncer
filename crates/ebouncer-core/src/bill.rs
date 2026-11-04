@@ -6,15 +6,15 @@
 
 use crate::ledger::LedgerEvent;
 use crate::rates::{price_at, tool_entry_at, Tier, VendorRates};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Period {
     pub from: String,
     pub to: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BillItem {
     pub tool: String,
     pub category: String, // token_input | token_output | cache_read | search_request | fetch_request
@@ -25,7 +25,7 @@ pub struct BillItem {
     pub note: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Invoice {
     pub client: String,
     pub period: Period,

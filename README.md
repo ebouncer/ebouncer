@@ -35,6 +35,8 @@ ebc                     # 就这一条：向导自动发现宿主 → 记真实�
 ebc demo                # 纯内存演示效果，不写任何文件
 ebc tag 客户名          # 在项目目录里给费用挂客户，存量账目自动重新归因
 ebc bill                # 无参数：列出可开票对象；--client X --format pdf --out 出账单
+ebc bundle --client 客户名   # 生成 .ebc.zip 证据包（账单 + 账本切片 + 费率快照）
+ebc verify-bundle 包.ebc.zip # 离线验证：哈希 + 用包内数据复算账单 + 费率指纹
 ebc init --yes          # 危险命令观察钩子（dry-run：提示+审计，不拦截；ebc init 可先预览）
 ebc doctor              # 环境体检
 ```

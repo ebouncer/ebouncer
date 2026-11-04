@@ -11,6 +11,7 @@
 - **缓存写入（cache_write）计价**：`ModelRate` 新增 `cache_write_per_mtok`（缺省 0）。此前 cache_write 只记量不计价；配置单价后按 token 计费并随高峰/空闲价档折算，账单/CSV/JSON 单列 `cache_write` 科目（invoice schema 枚举已补）。DeepSeek 出厂表保持 0——官方不对写缓存单独收费，写入已含在"缓存未命中"输入价内，填价会重复计费。
 - **Anthropic（USD）出厂费率**：新增 `crates/ebouncer-rules/rates/anthropic.yaml`，覆盖 Fable/Opus/Sonnet/Haiku 当前与上一代共 10 个模型（含 `cache_read` / `cache_write` 单价），模型 ID 支持日期后缀与最长前缀匹配。官方定价页 2026-11-04 核对（并与 nOps 2026-10-19 rate card 交叉验证）；缓存写入按 5 分钟 TTL 价。
 - **单币种账单**：`Invoice.currency` 改为跟随命中费率条目的币种（CNY / USD），`ebc ledger` / `ebc bill` 按币种显示 ¥/$；同一客户跨币种时返回 `BillError::MixedCurrency` 明确拒绝，不做隐式汇率换算。
+- **可携带证据包（.ebc.zip）**：`ebc bundle --client X` 打包 manifest + SHA256SUMS + invoice + 账本切片 + 费率快照（可选 `--with-audit` 带审计链）；`ebc verify-bundle` 离线校验哈希、用包内账本 + 费率复算账单、校验费率指纹与审计链。ZIP 为 store-only 自实现（不新增依赖）；干净 HOME 下可验证，不读 `~/.ebouncer`。新增 4 条回归测试。
 
 ### 变更
 - **定位纠正（外部评审反馈）**：README/BETA/SECURITY 不再声称"宿主做不到命令级拦截/留痕"——Claude Code / Codex / Cursor 均已自带 hooks，且支持托管配置锁定。现在明确：v0.1 的 shell 钩子只覆盖**交互式终端里人敲的命令**，agent 的 `bash -c` 不经过；文本规则可被 `python -c`/变量拼接/`curl|sh` 绕过；同一 UID 下审计只能"可发现"、不能"不可篡改"。差异化改为跨工具账本/开票/证据可携带，宿主原生 hook 适配排进 v0.2。
