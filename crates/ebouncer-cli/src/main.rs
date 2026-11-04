@@ -506,7 +506,7 @@ fn cmd_tag(client: &str, proj_dir: &Path, data_dir: &Path) -> i32 {
             return 1;
         }
         println!("✔ 已重新归因存量 {touched} 条事件（项目「{want}」）");
-        println!("下一步：ebc bill --client \"{client}\" --format pdf --out");
+        println!("下一步：ebc bill --client \"{client}\" --pdf");
     } else {
         println!("（项目「{want}」暂无存量账目；下次 ebc ingest 的新事件会自动带此客户）");
         println!("下一步：ebc ingest && ebc bill");
@@ -569,7 +569,7 @@ fn cmd_bill_clients(dir: &Path, days: i64) -> i32 {
         println!("\n另有 {unattributed} 条事件未归因——先在该项目目录跑：ebc tag 客户名");
     }
     if let Some((top, cur, _)) = rows.first() {
-        println!("\n下一步：ebc bill --client \"{top}\" --format pdf --out（币种 {cur}）");
+        println!("\n下一步：ebc bill --client \"{top}\" --pdf（币种 {cur}）");
     }
     0
 }
