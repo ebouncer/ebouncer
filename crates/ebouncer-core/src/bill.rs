@@ -100,6 +100,42 @@ impl std::fmt::Display for BillError {
 
 impl std::error::Error for BillError {}
 
+/// 展示用计价单位：token 科目按百万 token，按次科目按千次请求。
+pub fn unit_basis(category: &str) -> &'static str {
+    match category {
+        "search_request" | "fetch_request" => "1K 次",
+        _ => "1M tokens",
+    }
+}
+
+/// 数量千分位（std 的 format 不支持 `{:,}`）。
+pub fn group_digits(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, ch) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// 把 `price_source` 归一成价档短标签，供账单表格展示。
+pub fn tier_label(price_source: &str) -> &'static str {
+    if price_source.contains("高峰价") {
+        "高峰"
+    } else if price_source.contains("空闲价") {
+        "空闲"
+    } else if price_source.contains("按次价") {
+        "按次"
+    } else if price_source.contains("统一价") {
+        "统一"
+    } else {
+        "-"
+    }
+}
+
 /// 解析一条事件的计价锚点与单价（同时返回命中的费率条目，供账单冻结快照）：
 /// - 有模型：走 rates::price_at（版本选择 + 高峰/空闲价档）；
 /// - 无模型（纯 Search/Fetch 按次事件）：走 rates::tool_entry_at 取按次价，价档记为统一价
@@ -727,5 +763,27 @@ mod tests {
                 assert!(list.contains(&"USD".to_string()));
             }
         }
+    }
+
+    #[test]
+    fn unit_and_tier_labels() {
+        assert_eq!(unit_basis("token_input"), "1M tokens");
+        assert_eq!(unit_basis("cache_read"), "1M tokens");
+        assert_eq!(unit_basis("search_request"), "1K 次");
+        assert_eq!(tier_label("费率表 deepseek@2026-11-01 · 高峰价"), "高峰");
+        assert_eq!(
+            tier_label("费率表 deepseek@2026-11-01 · 空闲价 ×0.5"),
+            "空闲"
+        );
+        assert_eq!(
+            tier_label("费率表 deepseek@2026-11-01 · 按次价（无时段折扣）"),
+            "按次"
+        );
+        assert_eq!(tier_label("费率表 deepseek@2026-11-01 · 统一价"), "统一");
+        assert_eq!(tier_label("费率表版本 2026-11-01"), "-");
+        assert_eq!(group_digits(0), "0");
+        assert_eq!(group_digits(999), "999");
+        assert_eq!(group_digits(1000), "1,000");
+        assert_eq!(group_digits(42_272_640), "42,272,640");
     }
 }

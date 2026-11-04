@@ -3,7 +3,8 @@
 //! 水印（免费版）为平铺斜排 SVG 背景；`--trial-clean` / 付费后 watermark=false 自然无痕。
 //! 无浏览器时降级：HTML 即交付物，命令行给出提示——PDF 只是糖，数据才是产品。
 
-use crate::bill::Invoice;
+use crate::bill::{Invoice, group_digits, tier_label, unit_basis};
+use chrono::DateTime;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -11,6 +12,42 @@ fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+/// 账单周期只显示日期；解析失败时原样返回。
+fn fmt_date(ts: &str) -> String {
+    DateTime::parse_from_rfc3339(ts)
+        .map(|d| d.format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|_| ts.to_string())
+}
+
+/// 生成时间去掉纳秒/偏移，统一显示 UTC。
+fn fmt_datetime(ts: &str) -> String {
+    DateTime::parse_from_rfc3339(ts)
+        .map(|d| d.format("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_else(|_| ts.to_string())
+}
+
+fn currency_symbol(currency: &str) -> &'static str {
+    match currency {
+        "CNY" => "¥",
+        "USD" => "$",
+        _ => "",
+    }
+}
+
+/// 账单编号：INV-YYYYMMDD-<账本指纹前 8 位>。无账本指纹时用占位符。
+fn invoice_no(inv: &Invoice) -> String {
+    let date = DateTime::parse_from_rfc3339(&inv.generated_at)
+        .map(|d| d.format("%Y%m%d").to_string())
+        .unwrap_or_else(|_| "00000000".to_string());
+    let tail = inv
+        .data_basis
+        .as_deref()
+        .map(|b| b.chars().take(8).collect::<String>().to_uppercase())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "--------".to_string());
+    format!("INV-{date}-{tail}")
 }
 
 /// 平铺水印 SVG（data URI，ASCII 文本避免编码问题）。
@@ -23,36 +60,44 @@ pub fn invoice_html(inv: &Invoice) -> String {
     } else {
         String::new()
     };
+    let sym = currency_symbol(&inv.currency);
     let mut rows = String::new();
     for i in &inv.items {
         rows.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td><td class=n>{}</td><td class=n>{:.4}</td><td class=n>{:.4}</td></tr>",
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td class=n>{}</td><td class=n>{:.4}</td><td class=n>{}{:.4}</td></tr>",
             esc(&i.tool),
             esc(&i.category),
-            i.qty,
+            unit_basis(&i.category),
+            tier_label(&i.price_source),
+            group_digits(i.qty),
             i.unit_price_per_k_or_mtok,
+            sym,
             i.amount
         ));
     }
+    let no = invoice_no(inv);
     format!(
         "<!doctype html><html><head><meta charset=utf-8><title>Invoice {client}</title>\
     <style>*{{box-sizing:border-box;margin:0}}@page{{size:A4;margin:18mm}}body{{font:14px/1.6 'Segoe UI',system-ui,sans-serif;color:#111;{wm}}}\
-    h1{{font-size:22px;margin:0 0 4px}}.muted{{color:#666;font-size:12px}}table{{width:100%;border-collapse:collapse;margin-top:18px}}\
-    th,td{{text-align:left;padding:6px 8px;border-bottom:1px solid #ddd}}th{{font-size:12px;color:#555;background:#fafafa}}\
+    h1{{font-size:22px;margin:0 0 4px}}.muted{{color:#666;font-size:12px}}\
+    table{{width:100%;border-collapse:collapse;margin-top:18px;font-size:12px}}\
+    th,td{{text-align:left;padding:5px 5px;border-bottom:1px solid #ddd}}th{{font-size:11px;color:#555;background:#fafafa}}\
     .n{{text-align:right;font-variant-numeric:tabular-nums}}.total{{margin-top:18px;text-align:right;font-size:18px}}\
     .meta{{margin-top:26px;font-size:11px;color:#888;border-top:1px solid #eee;padding-top:8px}}</style></head>\
     <body><h1>AI 用量账单 · {client}</h1>\
-    <div class=muted>周期 {from} ~ {to} · 币种 {currency} · 生成于 {gen}</div>\
-    <table><thead><tr><th>工具</th><th>科目</th><th class=n>数量</th><th class=n>单价</th><th class=n>金额</th></tr></thead>\
+    <div class=muted>编号 {no} · 周期 {from} ~ {to} · 币种 {currency} · 生成于 {gen}</div>\
+    <table><thead><tr><th>工具</th><th>科目</th><th>计价单位</th><th>价档</th><th class=n>数量</th><th class=n>单价</th><th class=n>金额</th></tr></thead>\
     <tbody>{rows}</tbody></table>\
-    <div class=total>合计：{total:.2} {currency}（加成 {markup:.0}% · 估算未含税）</div>\
-    <div class=meta>口径：token×厂商公开定价页单价 + 工具按次计费，估算未含税；金额以厂商账单为准，本单提供归因分项。\
+    <div class=total>合计：{sym}{total:.2} {currency}（加成 {markup:.0}% · 估算未含税）</div>\
+    <div class=meta>口径：token×厂商公开定价页单价 + 工具按次计费；高峰/空闲按事件时间分档，按次价不随时段折扣；单价单位：token 每百万、按次每千次。估算未含税；金额以厂商账单为准，本单提供归因分项。\
     账本指纹 {basis} · 费率表指纹 {rates_fp} · eBouncer v{ver}{watermark_note}</div></body></html>",
         client = esc(&inv.client),
-        from = esc(&inv.period.from),
-        to = esc(&inv.period.to),
+        no = esc(&no),
+        from = esc(&fmt_date(&inv.period.from)),
+        to = esc(&fmt_date(&inv.period.to)),
         currency = esc(&inv.currency),
-        gen = esc(&inv.generated_at),
+        gen = esc(&fmt_datetime(&inv.generated_at)),
+        sym = sym,
         wm = wm,
         rows = rows,
         total = inv.total,
@@ -201,7 +246,7 @@ mod tests {
                 qty: 1000000,
                 unit_price_per_k_or_mtok: 2.0,
                 amount: 2.0,
-                price_source: "费率表版本 2026-11-01".into(),
+                price_source: "费率表 deepseek@2026-11-01 · 高峰价".into(),
                 note: None,
             }],
             markup: 0.2,
@@ -221,6 +266,27 @@ mod tests {
         assert!(h.contains("ACME"));
         assert!(h.contains("2.40"));
         assert!(h.contains("费率表指纹 feedface"), "{h}");
+    }
+
+    #[test]
+    fn html_shows_unit_tier_and_invoice_number() {
+        let mut i = inv(false);
+        i.items.push(crate::bill::BillItem {
+            tool: "dsh".into(),
+            category: "search_request".into(),
+            qty: 12,
+            unit_price_per_k_or_mtok: 5.0,
+            amount: 0.06,
+            price_source: "费率表 deepseek@2026-11-01 · 按次价（无时段折扣）".into(),
+            note: None,
+        });
+        let h = invoice_html(&i);
+        assert!(h.contains("1M tokens"), "{h}");
+        assert!(h.contains("1K 次"), "{h}");
+        assert!(h.contains("高峰"), "{h}");
+        assert!(h.contains("按次"), "{h}");
+        assert!(h.contains("INV-20261102-ABCD1234"), "{h}");
+        assert!(h.contains("¥2.0000"), "{h}");
     }
     #[test]
     fn clean_invoice_has_no_watermark() {

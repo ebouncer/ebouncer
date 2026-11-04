@@ -837,13 +837,19 @@ fn run(cmd: Cmd) -> i32 {
                         }
                     );
                     println!(
-                        "{:<13} {:<15} {:>12} {:>12} {:>12}",
-                        "tool", "category", "qty", "unit", "amount"
+                        "{:<13} {:<15} {:<10} {:<6} {:>14} {:>10} {:>12}",
+                        "tool", "category", "单位", "价档", "qty", "unit", "amount"
                     );
                     for i in &inv.items {
                         println!(
-                            "{:<13} {:<15} {:>12} {:>12.4} {:>12.4}",
-                            i.tool, i.category, i.qty, i.unit_price_per_k_or_mtok, i.amount
+                            "{:<13} {:<15} {:<10} {:<6} {:>14} {:>10.4} {:>12}",
+                            i.tool,
+                            i.category,
+                            ebouncer_core::bill::unit_basis(&i.category),
+                            ebouncer_core::bill::tier_label(&i.price_source),
+                            ebouncer_core::bill::group_digits(i.qty),
+                            i.unit_price_per_k_or_mtok,
+                            money(&inv.currency, i.amount)
                         );
                     }
                     let basis = inv.data_basis.as_deref().unwrap_or("-");
