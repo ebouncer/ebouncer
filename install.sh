@@ -21,7 +21,7 @@ case "$os" in
   *) echo "不支持的系统: $os" >&2; exit 1 ;;
 esac
 
-fetch_tag() { curl -fsSL "$1" | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4; }
+fetch_tag() { curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "$1" | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4; }
 
 if [ -z "${EBC_VERSION:-}" ]; then
   case "${EBC_CHANNEL:-auto}" in
@@ -48,8 +48,8 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 echo "下载 $asset ..."
-curl -fsSL -o "$tmp/$asset" "$base/$asset"
-if curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt" 2>/dev/null; then
+curl -fsSL --retry 6 --retry-delay 3 --retry-all-errors -o "$tmp/$asset" "$base/$asset"
+if curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors -o "$tmp/checksums.txt" "$base/checksums.txt" 2>/dev/null; then
   ( cd "$tmp" && sha256sum -c --ignore-missing checksums.txt ) || {
     echo "校验失败：产物与 checksums.txt 不符，中止安装" >&2; exit 1; }
 fi
