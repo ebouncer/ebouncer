@@ -27,6 +27,14 @@ jobs:
           bash -n install.sh
           shellcheck -S error install.sh
 
+  release-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build -q -p ebouncer-cli
+      - name: 行为验收（G2–G6 自动化部分）
+        run: bash scripts/release-check.sh --fast
+
   # 不建 release、不打 tag：只验证 release 构建能过，避免用 rc tag 试管道
   release-dry-run:
     if: github.event_name == 'workflow_dispatch'

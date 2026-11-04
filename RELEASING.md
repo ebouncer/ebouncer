@@ -38,6 +38,8 @@
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+# 2.5) 行为验收：G2–G6 自动化部分（demo/空账本/审计截断/混币/证据包/安装脚本语法）
+bash scripts/release-check.sh
 # 3) 可选：CI 手动跑 release-dry-run（构建 + 二进制冒烟，不建 release）
 #    gh workflow run ci.yml
 # 4) 打 tag（rc 带 -rc.N）
