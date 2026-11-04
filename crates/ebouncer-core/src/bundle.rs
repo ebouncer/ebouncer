@@ -127,13 +127,13 @@ pub fn create(req: &BundleRequest) -> Result<(Vec<u8>, Manifest), String> {
 
     // 审计链可选：默认不带（命令文本虽已脱敏，仍属敏感证据）
     let mut audit_checked = false;
-    if let Some(dir) = req.audit_dir {
-        if let Ok(bytes) = fs::read(dir.join("audit.jsonl")) {
-            payload.insert("audit.jsonl".into(), bytes);
-            audit_checked = true;
-            if let Ok(head) = fs::read(dir.join("audit.head")) {
-                payload.insert("audit.head".into(), head);
-            }
+    if let Some(dir) = req.audit_dir
+        && let Ok(bytes) = fs::read(dir.join("audit.jsonl"))
+    {
+        payload.insert("audit.jsonl".into(), bytes);
+        audit_checked = true;
+        if let Ok(head) = fs::read(dir.join("audit.head")) {
+            payload.insert("audit.head".into(), head);
         }
     }
 

@@ -44,10 +44,11 @@ fn first_remote_url(project_dir: &Path) -> Option<String> {
         let t = line.trim();
         if t.starts_with('[') {
             in_remote = t.starts_with("[remote ");
-        } else if in_remote && t.starts_with("url") {
-            if let Some((_, v)) = t.split_once('=') {
-                return Some(normalize_remote(v.trim()));
-            }
+        } else if in_remote
+            && t.starts_with("url")
+            && let Some((_, v)) = t.split_once('=')
+        {
+            return Some(normalize_remote(v.trim()));
         }
     }
     None

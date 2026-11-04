@@ -309,10 +309,10 @@ pub fn load_dir(dir: &Path) -> Vec<VendorRates> {
     if let Ok(rd) = fs::read_dir(dir) {
         for e in rd.flatten() {
             let p = e.path();
-            if p.extension().and_then(|x| x.to_str()) == Some("yaml") {
-                if let Ok(s) = fs::read_to_string(&p) {
-                    out.extend(parse_yaml(&s));
-                }
+            if p.extension().and_then(|x| x.to_str()) == Some("yaml")
+                && let Ok(s) = fs::read_to_string(&p)
+            {
+                out.extend(parse_yaml(&s));
             }
         }
     }

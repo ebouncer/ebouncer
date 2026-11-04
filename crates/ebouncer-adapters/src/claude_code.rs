@@ -3,6 +3,7 @@
 //! 契约（2026-11-02 经 ccusage/格式文档/Anthropic prompt-caching 文档三方核验）：
 //! - `type=="assistant"` 行、`message.usage{input_tokens, output_tokens,
 //!   cache_read_input_tokens, cache_creation_input_tokens}`；顶层 `sessionId`/`cwd`/`timestamp`。
+//!
 //! 已知上游风险（读到时留意，不静默）：anthropics/claude-code#28197 / #25941 报告个别版本
 //! JSONL 把 input/output_tokens 写成流式占位值(≈1)。若发现异常小值，ledger 会原样入账——
 //! 校准建议对照 `npx ccusage` 同期数字（W4 兼容套件加一条对账脚本）。

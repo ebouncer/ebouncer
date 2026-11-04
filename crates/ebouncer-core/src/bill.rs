@@ -74,6 +74,11 @@ struct Qty {
     requests_fetch: u64,
 }
 
+/// 聚合键：tool + model + 命中的费率条目与价档。
+type AggKey = (String, String, Option<RateKey>);
+/// 聚合值：数量合计 + 该组单价（无价模型为 None）。
+type AggValue = (Qty, Option<UnitPrices>);
+
 /// 账单构建失败的原因。v0.1 只支持单币种账单：同一客户跨币种（如 CNY + USD）
 /// 时明确拒绝，不做隐式汇率换算（汇率需要可追溯快照，留给后续版本）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,10 +185,7 @@ pub fn build(
         .to_string();
 
     // 聚合：(tool, model, 费率条目+价档) → 数量 + 单价
-    let mut agg: std::collections::BTreeMap<
-        (String, String, Option<RateKey>),
-        (Qty, Option<UnitPrices>),
-    > = Default::default();
+    let mut agg: std::collections::BTreeMap<AggKey, AggValue> = Default::default();
     // 价格快照：只冻结本单实际命中的条目（vendor+生效版本去重，BTreeMap 保证顺序稳定）
     let mut used_entries: std::collections::BTreeMap<(String, String), VendorRates> =
         Default::default();

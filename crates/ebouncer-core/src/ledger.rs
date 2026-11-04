@@ -76,7 +76,7 @@ pub fn read_all(path: &Path) -> std::io::Result<(Vec<LedgerEvent>, u64)> {
         if line.trim().is_empty() {
             continue;
         }
-        match serde_json::from_str::<LedgerEvent>(&line) {
+        match serde_json::from_str::<LedgerEvent>(line) {
             Ok(ev) => out.push(ev),
             Err(_) => bad += 1,
         }

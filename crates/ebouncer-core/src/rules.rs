@@ -43,27 +43,27 @@ impl RuleSet {
             return ("allow".into(), None);
         }
         for r in &self.rules {
-            if let Ok(re) = Regex::new(&r.pattern) {
-                if re.is_match(cmd) {
-                    let decision = match r.action.as_str() {
-                        "deny" => {
-                            if dry_run {
-                                "log-deny"
-                            } else {
-                                "deny"
-                            }
+            if let Ok(re) = Regex::new(&r.pattern)
+                && re.is_match(cmd)
+            {
+                let decision = match r.action.as_str() {
+                    "deny" => {
+                        if dry_run {
+                            "log-deny"
+                        } else {
+                            "deny"
                         }
-                        "ask" => {
-                            if dry_run {
-                                "log-ask"
-                            } else {
-                                "ask"
-                            }
+                    }
+                    "ask" => {
+                        if dry_run {
+                            "log-ask"
+                        } else {
+                            "ask"
                         }
-                        _ => "log",
-                    };
-                    return (decision.into(), Some(r.id.clone()));
-                }
+                    }
+                    _ => "log",
+                };
+                return (decision.into(), Some(r.id.clone()));
             }
         }
         ("allow".into(), None)

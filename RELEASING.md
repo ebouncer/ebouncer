@@ -13,6 +13,13 @@
 
 版本语义：`0.x` 期间允许破坏性变更；账本/发票 schema 有版本号，读旧数据必须兼容。
 
+## 发布纪律（2026-11 教训）
+
+1. **tag = 对外交付，不是 CI**。验证构建用 `ci` 的 `release-dry-run`（workflow_dispatch），不要靠连打 rc 试管道。
+2. **一个候选窗口只打一个 rc**。失败就修，但修复攒到下一个 rc；不要在 rc 之间夹新功能。
+3. **候选冻结**后只修 P0（安装失败/数据损坏/金额错误）；功能排到下一个 minor。
+4. rc 必须标 prerelease；只有正式版才进入 `EBC_CHANNEL=stable`。
+
 ## 发布门槛（v0.1.0 基础版）
 
 1. `cargo test --workspace` 全绿；本地 `ebc demo` / `ebc ledger` / `ebc bill` / `ebc audit-verify` 冒烟通过。
@@ -27,14 +34,18 @@
 ```bash
 # 1) 版本号与 CHANGELOG
 #    Cargo.toml workspace.version 与 CHANGELOG 的 [X.Y.Z] 对齐
-# 2) 全量测试
+# 2) 本地门禁（CI 同款硬门）
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-# 3) 打 tag（rc 带 -rc.N）
+# 3) 可选：CI 手动跑 release-dry-run（构建 + 二进制冒烟，不建 release）
+#    gh workflow run ci.yml
+# 4) 打 tag（rc 带 -rc.N）
 git tag -a vX.Y.Z-rc.1 -m "vX.Y.Z-rc.1"
 git push origin vX.Y.Z-rc.1
-# 4) 等 release workflow：双平台构建 → checksums → GitHub Release → install-smoke
-# 5) soak 5–7 天（beta 用户），修 P0/P1
-# 6) 稳定版
+# 5) 等 release workflow：双平台构建 → checksums → GitHub Release → install-smoke
+# 6) soak 5–7 天（beta 用户），只修 P0/P1
+# 7) 稳定版
 git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
 ```
 

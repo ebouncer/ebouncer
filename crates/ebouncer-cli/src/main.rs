@@ -3,6 +3,7 @@
 //! 1. 无参数 = 向导：自动探测宿主 → 自动补账 → 直接给花费结论与下一步；
 //! 2. 零记忆：tag/bill 互相给可复制的下一步命令；--days 统一默认 30；
 //! 3. demo 纯内存演示，绝不污染真实账本；ingest 事件级幂等（续写会话可增量补账）。
+//!
 //! 命令名刻意避开 `eb`（与 AWS EB CLI 冲突）。
 
 use chrono::{DateTime, Duration, Utc};
@@ -205,10 +206,10 @@ fn collect_logs(dir: &Path, out: &mut Vec<PathBuf>) {
         let p = e.path();
         if p.is_dir() {
             collect_logs(&p, out);
-        } else if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
-            if name.ends_with(".jsonl") || name.ends_with(".jsonl.zstd") {
-                out.push(p);
-            }
+        } else if let Some(name) = p.file_name().and_then(|s| s.to_str())
+            && (name.ends_with(".jsonl") || name.ends_with(".jsonl.zstd"))
+        {
+            out.push(p);
         }
     }
 }
@@ -230,10 +231,8 @@ fn ingest_dir(
     let mut n = 0usize;
     for p in files {
         for ev in ad.parse_file(&p) {
-            if seen.insert(ev_key(&ev)) {
-                if ledger::append(out, &ev).is_ok() {
-                    n += 1;
-                }
+            if seen.insert(ev_key(&ev)) && ledger::append(out, &ev).is_ok() {
+                n += 1;
             }
         }
     }
@@ -309,6 +308,9 @@ struct LedgerRow {
     mixed: bool,
 }
 
+/// 按金额排序用的 (金额, 聚合键, 币种, 是否混币)。
+type LedgerTopRow = (f64, (String, String, String, String), String, bool);
+
 /// 按 (tool, project, client, model) 聚合窗口内事件。
 /// 金额**逐事件**按各自时间选生效费率版本再求和：同一行可能跨调价窗口，
 /// 用单个时间点为整行估价会系统性算错（2026-11-04 修复）。
@@ -370,7 +372,7 @@ fn print_ledger(dir: &Path, days: i64) -> bool {
         "fetch*",
         "≈花费"
     );
-    let mut top: Vec<(f64, (String, String, String, String), String, bool)> = Vec::new();
+    let mut top: Vec<LedgerTopRow> = Vec::new();
     for (k, a) in &agg {
         top.push((
             a.cost,
@@ -1184,6 +1186,8 @@ fn run(cmd: Cmd) -> i32 {
     }
 }
 
+/// 演示/测试用的事件构造器：字段多但一眼能看懂，不做结构体包装。
+#[allow(clippy::too_many_arguments)]
 fn demo_ev(
     tool: &str,
     project: &str,

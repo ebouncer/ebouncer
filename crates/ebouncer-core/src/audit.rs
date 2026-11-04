@@ -7,6 +7,7 @@
 //! - 只删尾部记录 → 文件比 checkpoint 短，可检出；
 //! - 删整个文件或删 checkpoint → checkpoint 缺失会显式降级告警；
 //! - 同时改写正文并重算链、再更新 checkpoint → 本机无法防（需要外部锚点/内核探针）。
+//!
 //! 这层保证的是"篡改可发现"，不是"不可篡改"。
 
 use serde::{Deserialize, Serialize};
@@ -206,15 +207,15 @@ pub fn verify(path: &Path) -> std::io::Result<VerifyReport> {
     let (lines, broken_at, hash_at) = scan(path, checkpoint.as_ref().map(|c| c.seq))?;
     report.lines = lines;
     report.broken_at = broken_at;
-    if let Some(cp) = checkpoint {
-        if broken_at == 0 {
-            match hash_at {
-                // 文件比锚点短：尾部被删
-                None => report.truncated = Some((cp.seq, lines)),
-                // 同序号但内容/哈希不同：该条被替换
-                Some(h) if h != cp.hash => report.truncated = Some((cp.seq, lines)),
-                _ => {}
-            }
+    if let Some(cp) = checkpoint
+        && broken_at == 0
+    {
+        match hash_at {
+            // 文件比锚点短：尾部被删
+            None => report.truncated = Some((cp.seq, lines)),
+            // 同序号但内容/哈希不同：该条被替换
+            Some(h) if h != cp.hash => report.truncated = Some((cp.seq, lines)),
+            _ => {}
         }
     }
     Ok(report)

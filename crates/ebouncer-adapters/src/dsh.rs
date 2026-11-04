@@ -19,17 +19,10 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+#[derive(Default)]
 pub struct DshAdapter {
     /// 客户归因映射表（CLI 注入；默认空 = 仅项目文件/git remote 生效）
     pub client_map: ClientMap,
-}
-
-impl Default for DshAdapter {
-    fn default() -> Self {
-        Self {
-            client_map: ClientMap::default(),
-        }
-    }
 }
 
 /// DSH 日志实测为「每行一个 zstd frame」的追加式文件（53 行/27 帧等），
@@ -45,11 +38,8 @@ fn read_maybe_zstd(path: &Path) -> std::io::Result<String> {
     }
     let mut out = Vec::new();
     let mut off = 0usize;
-    loop {
-        let start = match buf[off..].windows(4).position(|w| w == ZSTD_MAGIC) {
-            Some(p) => off + p,
-            None => break,
-        };
+    while let Some(p) = buf[off..].windows(4).position(|w| w == ZSTD_MAGIC) {
+        let start = off + p;
         let mut cur = std::io::Cursor::new(&buf[start..]);
         let mut sd = ruzstd::decoding::StreamingDecoder::new(&mut cur)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
