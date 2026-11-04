@@ -5,6 +5,8 @@
 ## [Unreleased]
 
 ### 新增
+- **安装体验**：Windows 原生 `install.ps1`（用户态、sha256 校验、自动写用户 PATH）；Linux `install.sh` 自动把 `~/.local/bin` 写进 shell rc；新增 [INSTALL.md](INSTALL.md)（Linux/Windows 安装、开票、升级/卸载、排错）。
+- **开票简化**：`ebc bill --client X --pdf`（等价 `--format pdf --out`），`--pdf --bundle` 一次出 PDF + 证据包。
 - **高峰/空闲时段化计价**：费率表新增 `time_tiers`（高峰窗口 + 固定 UTC 偏移 + 周末/节假日规则 + 空闲倍数），同一版本内的事件按本地时间落到高峰或空闲价档，账单按价档拆行并在 `price_source` 标注。DeepSeek 出厂表按官方定价页（2026-11-04 核实）配置：北京时间周一至周五 09:00-12:00、14:00-18:00 高峰，空闲半价；节假日需在 `holiday_dates` 显式列出（无法本地推导）。
 - 出厂费率表补充 **deepseek-v4-pro**（官方页 2026-11-04 核实：9.0 / 27.0 / 缓存命中 0.3 高峰价）与旧名 `deepseek-v4-flash` 映射。
 - **账单价格快照（可复现）**：`ebc bill` 把本单实际命中的费率条目原文写进 `rates_snapshot`，并对快照取 sha256 写入 `rates_fingerprint`；表格/CSV/PDF 页脚都带指纹，CSV/JSON 可回查条目。费率表日后增删版本也不影响已开账单的金额与依据；同一账本 + 同一费率表重开账单指纹一致（新增回归测试）。

@@ -26,22 +26,40 @@ Claude Code / Codex / Cursor 现在都自带 hook，能在工具调用层拦截�
 
 > **能力边界（v0.1）**：`ebc init` 注入的是 shell 钩子，只覆盖**人在交互式终端里敲的命令**；agent 通过 `bash -c` 起的命令不经过它（宿主原生 hook 适配在 v0.2）。审计链提供"篡改可发现"（含尾部截断检测），不是"不可篡改"：同一 UID 下 agent 可以改 rc、删 checkpoint、重算哈希；真正的内核级强制在 v0.3（eBPF/LSM）。
 
-## 快速开始（Linux / WSL / Git-Bash / MSYS2）
+## 安装（Linux / Windows）
+
+**Linux / WSL**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ebouncer/ebouncer/main/install.sh | sh
-
-ebc                     # 就这一条：向导自动发现宿主 → 记真实账 → 给花费矩阵
-ebc demo                # 纯内存演示效果，不写任何文件
-ebc tag 客户名          # 在项目目录里给费用挂客户，存量账目自动重新归因
-ebc bill                # 无参数：列出可开票对象；--client X --format pdf --out 出账单
-ebc bundle --client 客户名   # 生成 .ebc.zip 证据包（账单 + 账本切片 + 费率快照）
-ebc verify-bundle 包.ebc.zip # 离线验证：哈希 + 用包内数据复算账单 + 费率指纹
-ebc init --yes          # 危险命令观察钩子（dry-run：提示+审计，不拦截；ebc init 可先预览）
-ebc doctor              # 环境体检
 ```
 
-完整上手见 [BETA.md](BETA.md)，能力边界见 [ROADMAP.md](ROADMAP.md)，发版流程见 [RELEASING.md](RELEASING.md)。
+**Windows（PowerShell）**
+
+```powershell
+irm https://raw.githubusercontent.com/ebouncer/ebouncer/main/install.ps1 | iex
+```
+
+装完重开终端，`ebc --version` 验证。详细步骤、PATH 排错、升级/卸载见 [INSTALL.md](INSTALL.md)。
+
+## 三步开票
+
+```bash
+ebc                              # 1) 自动记账 + 近 30 天花费
+cd 项目目录 && ebc tag 客户名     # 2) 归因（已归因可跳过）
+ebc bill --client "客户名" --pdf  # 3) 出成本账单 PDF
+```
+
+加 `--bundle` 同时生成可验证证据包：
+
+```bash
+ebc bill --client "客户名" --pdf --bundle
+```
+
+- `ebc bill` 无参数 = 列出可开票客户
+- 成本核算**不加** `--markup`；`--markup 0.2` 是报价单（含服务费）
+- 前 3 张可加 `--trial-clean` 去水印
+- 完整命令见 [INSTALL.md](INSTALL.md)；上手清单见 [BETA.md](BETA.md)
 
 ## 数据都在你自己的机器上
 

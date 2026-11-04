@@ -26,6 +26,16 @@ jobs:
         run: |
           bash -n install.sh
           shellcheck -S error install.sh
+      - name: install.ps1 语法（Windows PowerShell 5.1 兼容）
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error ("line {0}: {1}" -f $_.Extent.StartLineNumber, $_.Message) }
+            exit 1
+          }
+          Write-Host "install.ps1 syntax OK"
 
   release-check:
     runs-on: ubuntu-latest

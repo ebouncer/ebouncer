@@ -5,11 +5,19 @@
 
 ## 1 分钟装好
 
+Linux / WSL：
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ebouncer/ebouncer/main/install.sh | sh
 ```
 
-**预期**：`✅ 已安装 .../ebc`。若提示 PATH，就照提示补一行 `export`（新开终端生效）。
+Windows（PowerShell）：
+
+```powershell
+irm https://raw.githubusercontent.com/ebouncer/ebouncer/main/install.ps1 | iex
+```
+
+**预期**：`✅ 已安装 .../ebc`。安装脚本会把安装目录写进 PATH；重开终端后 `ebc --version` 能跑即可。其他安装方式见 [INSTALL.md](INSTALL.md)。
 
 ## 2 分钟看到自己的账
 
@@ -27,15 +35,15 @@ ebc
 cd 你的某个项目目录
 ebc tag 测试甲方        # 挂客户名；存量账目自动重新归因
 ebc bill                # 不带参数：列出可开票对象 + 下一行可复制命令
-ebc bill --client 测试甲方 --format pdf --out
+ebc bill --client 测试甲方 --pdf
 ```
 
-**预期**：`~/.ebouncer/exports/` 里出现 PDF（明细 + 合计 + 账本指纹 + 斜排水印）。前 3 张加 `--trial-clean` 无水印。
+**预期**：`~/.ebouncer/exports/` 里出现 PDF（明细 + 合计 + 账本指纹 + 斜排水印）。前 3 张加 `--trial-clean` 无水印；`--pdf --bundle` 可同时出证据包。
 
 ## 30 秒出一份可验证证据包
 
 ```bash
-ebc bundle --client 测试甲方        # → ~/.ebouncer/exports/测试甲方-YYYYMMDD.ebc.zip
+ebc bill --client 测试甲方 --pdf --bundle   # PDF + .ebc.zip 一次出
 ebc verify-bundle ~/.ebouncer/exports/测试甲方-*.ebc.zip
 ```
 

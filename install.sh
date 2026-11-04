@@ -73,8 +73,22 @@ esac
 chmod +x "$BIN_DIR/ebc" 2>/dev/null || true
 
 echo "✅ 已安装 $BIN_DIR/ebc（$EBC_VERSION）"
-case ":$PATH:" in
-  *":$BIN_DIR:"*) ;;
-  *) echo "提示：把 $BIN_DIR 加入 PATH，例如 echo 'export PATH=\"\$PATH:$BIN_DIR\"' >> ~/.bashrc && source ~/.bashrc" ;;
-esac
+if [ "${EBC_NO_PATH:-0}" != "1" ]; then
+  case ":$PATH:" in
+    *":$BIN_DIR:"*) ;;
+    *)
+      # 用户态安装目录默认不在 PATH：写入 shell rc（幂等，可 EBC_NO_PATH=1 跳过）
+      for rc in "$HOME/.profile" "$HOME/.bashrc"; do
+        [ -f "$rc" ] || continue
+        grep -q 'eBouncer PATH' "$rc" && continue
+        {
+          printf '\n# >>> eBouncer PATH >>>\n'
+          printf 'export PATH="%s:$PATH"\n' "$BIN_DIR"
+          printf '# <<< eBouncer PATH <<<\n'
+        } >> "$rc"
+      done
+      echo "已把 $BIN_DIR 加入 PATH（重开终端生效；EBC_NO_PATH=1 可跳过）"
+      ;;
+  esac
+fi
 echo "下一步：ebc doctor（自检）→ ebc ingest（记第一笔账）"

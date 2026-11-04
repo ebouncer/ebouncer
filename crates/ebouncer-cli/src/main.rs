@@ -78,6 +78,12 @@ enum Cmd {
         /// 导出到 <data>/exports（永不覆盖，冲突自动加序号）
         #[arg(long)]
         out: bool,
+        /// 快捷方式：出 PDF（等价 --format pdf --out）
+        #[arg(long)]
+        pdf: bool,
+        /// 同时生成可验证证据包 .ebc.zip
+        #[arg(long)]
+        bundle: bool,
         /// 无水印版（前 3 张免费，之后带水印）
         #[arg(long)]
         trial_clean: bool,
@@ -750,6 +756,8 @@ fn run(cmd: Cmd) -> i32 {
             days,
             format,
             out,
+            pdf,
+            bundle: make_bundle,
             trial_clean,
             data_dir,
         } => {
@@ -757,6 +765,8 @@ fn run(cmd: Cmd) -> i32 {
             let Some(client) = client else {
                 return cmd_bill_clients(&dir, days);
             };
+            let format = if pdf { BillFmt::Pdf } else { format };
+            let out = out || pdf;
             let path = dir.join("ledger.jsonl");
             let (evs, _) = ledger::read_all(&path).unwrap_or_else(|_| (Vec::new(), 0));
             if evs.is_empty() {
@@ -792,14 +802,20 @@ fn run(cmd: Cmd) -> i32 {
             }
 
             let basis = ledger::file_sha256(&path).ok();
-            let inv =
-                match ebouncer_core::bill::build(&client, &evs, &table, markup, watermark, basis) {
-                    Ok(inv) => inv,
-                    Err(e) => {
-                        eprintln!("{e}");
-                        return 1;
-                    }
-                };
+            let inv = match ebouncer_core::bill::build(
+                &client,
+                &evs,
+                &table,
+                markup,
+                watermark,
+                basis.clone(),
+            ) {
+                Ok(inv) => inv,
+                Err(e) => {
+                    eprintln!("{e}");
+                    return 1;
+                }
+            };
             if inv.items.is_empty() {
                 let known: Vec<String> = {
                     let mut s: Vec<String> = evs
@@ -821,6 +837,63 @@ fn run(cmd: Cmd) -> i32 {
                 }
                 return 1;
             }
+
+            // --bundle：与账单同一份数据/口径，直接产出可验证证据包
+            if make_bundle {
+                let exp = dir.join("exports");
+                let _ = std::fs::create_dir_all(&exp);
+                let safe: String = client
+                    .chars()
+                    .map(|c| {
+                        if c.is_alphanumeric() || c == '-' || c == '_' {
+                            c
+                        } else {
+                            '-'
+                        }
+                    })
+                    .collect::<String>()
+                    .trim_matches('-')
+                    .to_string();
+                let safe = if safe.is_empty() {
+                    "client".to_string()
+                } else {
+                    safe
+                };
+                let stem = format!("{safe}-{}", Utc::now().format("%Y%m%d"));
+                let req = bundle::BundleRequest {
+                    client: &client,
+                    events: &evs,
+                    table: &table,
+                    markup,
+                    watermark,
+                    data_basis: basis.clone(),
+                    audit_dir: None,
+                    ebc_version: env!("CARGO_PKG_VERSION"),
+                };
+                match bundle::create(&req) {
+                    Ok((bytes, manifest)) => {
+                        let p = unique_path(&exp, &stem, "ebc.zip");
+                        if let Err(e) = std::fs::write(&p, &bytes) {
+                            eprintln!("写证据包失败：{e}");
+                            return 1;
+                        }
+                        println!(
+                            "证据包：{}（{} 字节）· {} · {} 条事件",
+                            p.display(),
+                            bytes.len(),
+                            money(&manifest.currency, manifest.invoice_total),
+                            evs.iter()
+                                .filter(|e| e.client.as_deref() == Some(client.as_str()))
+                                .count()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("生成证据包失败：{e}");
+                        return 1;
+                    }
+                }
+            }
+
             match format {
                 BillFmt::Json => println!("{}", inv.to_json()),
                 BillFmt::Csv => println!("{}", inv.to_csv()),
