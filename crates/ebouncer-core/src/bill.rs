@@ -5,6 +5,7 @@
 //! 说明——诚实是开票功能的生命线。
 
 use crate::ledger::LedgerEvent;
+use crate::plan::Provider;
 use crate::rates::{Tier, VendorRates, price_at, tool_entry_at};
 use serde::{Deserialize, Serialize};
 
@@ -17,12 +18,33 @@ pub struct Period {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BillItem {
     pub tool: String,
-    pub category: String, // token_input | token_output | cache_read | search_request | fetch_request
+    pub category: String, // token_input | token_output | cache_read | search_request | fetch_request | subscription_monthly
     pub qty: u64,
     pub unit_price_per_k_or_mtok: f64,
     pub amount: f64,
     pub price_source: String,
     pub note: Option<String>,
+}
+
+/// 订阅月费：默认直通，`allocate` 时按 token 占比分摊到客户。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SubscriptionFee {
+    pub provider: String,
+    pub monthly: f64,
+    pub currency: String,
+    #[serde(default)]
+    pub allocate: bool,
+}
+
+/// 账单里的订阅月费快照（可随证据包复算）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SubscriptionLine {
+    pub provider: String,
+    pub monthly: f64,
+    pub currency: String,
+    pub allocate: bool,
+    pub tokens: u64,
+    pub amount: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +62,9 @@ pub struct Invoice {
     pub rates_snapshot: Vec<VendorRates>,
     /// 快照的 sha256；同一账本 + 同一费率表重开账单应得到同一指纹（可复现性校验）。
     pub rates_fingerprint: String,
+    /// 订阅月费快照；旧账本/旧包缺省为空。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subscriptions: Vec<SubscriptionLine>,
     pub watermark: bool,
 }
 
@@ -106,6 +131,7 @@ impl std::error::Error for BillError {}
 pub fn unit_basis(category: &str) -> &'static str {
     match category {
         "search_request" | "fetch_request" => "1K 次",
+        "subscription_monthly" => "月",
         _ => "1M tokens",
     }
 }
@@ -220,6 +246,18 @@ fn resolve_price<'a>(
 /// 从账本事件构建某客户的账单。数量按 (tool, model, 生效费率条目) 聚合：
 /// 版本选择发生在**每条事件**上，同一模型跨调价窗口会拆成多行、各带自己的单价与
 /// price_source——账单金额因此与 `ebc ledger` 的汇总口径一致。
+/// 从事件的 model 名推断 provider（订阅分摊/模式过滤用）。
+fn event_provider(e: &LedgerEvent) -> Option<Provider> {
+    e.model.as_deref().and_then(Provider::from_model)
+}
+
+fn event_tokens(e: &LedgerEvent) -> u64 {
+    e.tokens_in
+        .saturating_add(e.tokens_out)
+        .saturating_add(e.cache_read)
+        .saturating_add(e.cache_write)
+}
+
 pub fn build(
     client: &str,
     events: &[LedgerEvent],
@@ -227,6 +265,18 @@ pub fn build(
     markup: f64,
     watermark: bool,
     data_basis: Option<String>,
+) -> Result<Invoice, BillError> {
+    build_with_subscriptions(client, events, table, markup, watermark, data_basis, &[])
+}
+
+pub fn build_with_subscriptions(
+    client: &str,
+    events: &[LedgerEvent],
+    table: &[VendorRates],
+    markup: f64,
+    watermark: bool,
+    data_basis: Option<String>,
+    subscriptions: &[SubscriptionFee],
 ) -> Result<Invoice, BillError> {
     let evts: Vec<&LedgerEvent> = events
         .iter()
@@ -251,6 +301,10 @@ pub fn build(
     let mut used_entries: std::collections::BTreeMap<(String, String), VendorRates> =
         Default::default();
     // 单币种约束：只由"命中了费率条目"的事件决定；无价模型不参与（金额本来就是 0）
+    let sub_providers: std::collections::BTreeSet<String> = subscriptions
+        .iter()
+        .map(|s| s.provider.to_ascii_lowercase())
+        .collect();
     let mut currencies: std::collections::BTreeSet<String> = Default::default();
     for e in &evts {
         let model = e.model.clone().unwrap_or_else(|| "-".to_string());
@@ -273,6 +327,43 @@ pub fn build(
         entry.0.requests_search += e.requests_search;
         entry.0.requests_fetch += e.requests_fetch;
     }
+
+    // 订阅月费：默认直通；allocate=true 时按该 provider 的 token 占比分摊（含其他客户的事件）。
+    let mut sub_lines: Vec<SubscriptionLine> = Vec::new();
+    for fee in subscriptions {
+        let pid = fee.provider.to_ascii_lowercase();
+        let total_tokens: u64 = events
+            .iter()
+            .filter(|e| event_provider(e).map(|p| p.id()) == Some(pid.as_str()))
+            .map(event_tokens)
+            .sum();
+        let client_tokens: u64 = evts
+            .iter()
+            .filter(|e| event_provider(e).map(|p| p.id()) == Some(pid.as_str()))
+            .map(|e| event_tokens(e))
+            .sum();
+        if client_tokens == 0 {
+            continue;
+        }
+        let amount = if fee.allocate && total_tokens > 0 {
+            fee.monthly * (client_tokens as f64 / total_tokens as f64)
+        } else {
+            fee.monthly
+        };
+        if amount <= 0.0 {
+            continue;
+        }
+        currencies.insert(fee.currency.clone());
+        sub_lines.push(SubscriptionLine {
+            provider: pid,
+            monthly: fee.monthly,
+            currency: fee.currency.clone(),
+            allocate: fee.allocate,
+            tokens: client_tokens,
+            amount,
+        });
+    }
+
     if currencies.len() > 1 {
         return Err(BillError::MixedCurrency(currencies.into_iter().collect()));
     }
@@ -330,6 +421,9 @@ pub fn build(
             }
             None => {
                 // 无价模型：数量入列、金额 0，note 声明——绝不静默丢行，也绝不编价
+                let is_sub = Provider::from_model(model)
+                    .map(|p| sub_providers.contains(p.id()))
+                    .unwrap_or(false);
                 for (cat, qty) in [
                     ("token_input", q.tokens_in),
                     ("token_output", q.tokens_out),
@@ -345,13 +439,45 @@ pub fn build(
                             qty,
                             unit_price_per_k_or_mtok: 0.0,
                             amount: 0.0,
-                            price_source: "无价格条目（费率表待补，禁止估价）".to_string(),
-                            note: Some(format!("模型 {model} 未配置单价")),
+                            price_source: if is_sub {
+                                "包月订阅（不按 token 计费）".to_string()
+                            } else {
+                                "无价格条目（费率表待补，禁止估价）".to_string()
+                            },
+                            note: Some(if is_sub {
+                                "仅记量；月费见 subscription_monthly 行".to_string()
+                            } else {
+                                format!("模型 {model} 未配置单价")
+                            }),
                         });
                     }
                 }
             }
         }
+    }
+
+    for s in &sub_lines {
+        items.push(BillItem {
+            tool: s.provider.clone(),
+            category: "subscription_monthly".into(),
+            qty: 1,
+            unit_price_per_k_or_mtok: s.amount,
+            amount: s.amount,
+            price_source: format!(
+                "{} 订阅月费（{}）",
+                s.provider,
+                if s.allocate {
+                    "按 token 分摊"
+                } else {
+                    "直通"
+                }
+            ),
+            note: Some(format!(
+                "月费 {} {}；客户 tokens {}",
+                s.monthly, s.currency, s.tokens
+            )),
+        });
+        raw_total += s.amount;
     }
 
     let total = raw_total * (1.0 + markup.max(0.0));
@@ -366,6 +492,7 @@ pub fn build(
         data_basis,
         rates_snapshot,
         rates_fingerprint,
+        subscriptions: sub_lines,
         watermark,
     })
 }
@@ -829,6 +956,43 @@ mod tests {
                 assert!(list.contains(&"USD".to_string()));
             }
         }
+    }
+
+    #[test]
+    fn subscription_fee_direct_and_allocated() {
+        let a = ev(Some("ACME"), "minimax", 1_000_000, 0, 0, 0, 0);
+        let b = ev(Some("OTHER"), "minimax", 3_000_000, 0, 0, 0, 0);
+        let direct = SubscriptionFee {
+            provider: "minimax".into(),
+            monthly: 40.0,
+            currency: "CNY".into(),
+            allocate: false,
+        };
+        let inv = build_with_subscriptions(
+            "ACME",
+            &[a.clone(), b.clone()],
+            &[],
+            0.0,
+            false,
+            None,
+            &[direct],
+        )
+        .unwrap();
+        assert_eq!(inv.items.last().unwrap().category, "subscription_monthly");
+        assert!((inv.items.last().unwrap().amount - 40.0).abs() < 1e-9);
+        assert!((inv.total - 40.0).abs() < 1e-9);
+        assert_eq!(inv.subscriptions.len(), 1);
+
+        let allocated = SubscriptionFee {
+            provider: "minimax".into(),
+            monthly: 40.0,
+            currency: "CNY".into(),
+            allocate: true,
+        };
+        let inv =
+            build_with_subscriptions("ACME", &[a, b], &[], 0.0, false, None, &[allocated]).unwrap();
+        assert!((inv.items.last().unwrap().amount - 10.0).abs() < 1e-9);
+        assert!((inv.total - 10.0).abs() < 1e-9);
     }
 
     #[test]

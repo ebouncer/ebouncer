@@ -95,6 +95,8 @@ ebc plan set minimax --mode payg
 - 非交互环境需加 `--yes`；从 stdin 粘贴用 `--key-stdin --provider <name>`
 - 识别不了 → `unknown`：只记量、金额 0，不套原厂价
 - DeepSeek API 只有按量；MiniMax 订阅 Key 可识别为 `subscription`
+- 订阅账单：默认月费直通；多个客户共用同一订阅时加 `--allocate` 按 token 占比分摊
+- MiniMax 按量：先 `ebc plan set minimax --mode payg`，才启用 M3.1-Flash / M3 的 token 单价
 
 ## 4. 常用命令
 

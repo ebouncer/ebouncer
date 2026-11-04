@@ -12,7 +12,7 @@ use ebouncer_adapters::{
     Adapter, claude_code::ClaudeCodeAdapter, codex::CodexAdapter, dsh::DshAdapter,
     normalize_project,
 };
-use ebouncer_core::{audit, bundle, ledger, plan, rates, rules};
+use ebouncer_core::{audit, bill, bundle, ledger, plan, rates, rules};
 mod hook;
 use std::collections::{BTreeMap, HashSet};
 use std::io::{BufRead, IsTerminal, Write};
@@ -85,6 +85,9 @@ enum Cmd {
         /// 同时生成可验证证据包 .ebc.zip
         #[arg(long)]
         bundle: bool,
+        /// 订阅月费按 token 占比分摊（默认直通）
+        #[arg(long)]
+        allocate: bool,
         /// 兼容旧脚本：已无作用（默认无水印）
         #[arg(long)]
         trial_clean: bool,
@@ -113,6 +116,9 @@ enum Cmd {
         /// 给包内账单加演示水印（默认关闭）
         #[arg(long)]
         watermark: bool,
+        /// 订阅月费按 token 占比分摊（默认直通）
+        #[arg(long)]
+        allocate: bool,
         /// 附带审计链（命令文本已脱敏；默认不带）
         #[arg(long)]
         with_audit: bool,
@@ -265,10 +271,44 @@ fn load_rates(data_dir: &Path) -> Vec<rates::VendorRates> {
     if !t.is_empty() {
         return t;
     }
-    // 出厂表：DeepSeek（CNY）+ Anthropic（USD）。用户自建 rates/ 时完全接管。
+    // 出厂表：DeepSeek（CNY）+ Anthropic（USD）+ MiniMax（CNY 按量）。
+    // MiniMax 是否生效由 plans.yaml 的 mode 决定，见 filter_rates_for_plan。
     let mut v = rates::parse_yaml(ebouncer_rules::rates::DEEPSEEK);
     v.extend(rates::parse_yaml(ebouncer_rules::rates::ANTHROPIC));
+    v.extend(rates::parse_yaml(ebouncer_rules::rates::MINIMAX));
     v
+}
+
+/// MiniMax 只有明确声明 payg 才用按量费率；订阅/unknown 一律不套 token 单价。
+fn filter_rates_for_plan(
+    mut table: Vec<rates::VendorRates>,
+    dir: &Path,
+) -> Vec<rates::VendorRates> {
+    let plans = plan::load(dir);
+    let minimax_payg = plans
+        .providers
+        .get("minimax")
+        .map(|e| e.mode == plan::MODE_PAYG)
+        .unwrap_or(false);
+    table.retain(|v| !v.vendor.eq_ignore_ascii_case("minimax") || minimax_payg);
+    table
+}
+
+fn subscription_fees(dir: &Path, allocate: bool) -> Vec<bill::SubscriptionFee> {
+    let plans = plan::load(dir);
+    plans
+        .providers
+        .iter()
+        .filter(|(_, e)| e.mode == plan::MODE_SUBSCRIPTION)
+        .filter_map(|(id, e)| {
+            e.monthly.map(|monthly| bill::SubscriptionFee {
+                provider: id.clone(),
+                monthly,
+                currency: e.currency.clone().unwrap_or_else(|| "CNY".into()),
+                allocate,
+            })
+        })
+        .collect()
 }
 
 fn collect_logs(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -1040,11 +1080,12 @@ fn cmd_bill_clients(dir: &Path, days: i64) -> i32 {
         ledger::read_all(&dir.join("ledger.jsonl")).unwrap_or_else(|_| (Vec::new(), 0));
     let cutoff =
         (Utc::now() - Duration::days(days)).to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
-    let table = load_rates(dir);
+    let table = filter_rates_for_plan(load_rates(dir), dir);
     let window: Vec<ledger::LedgerEvent> = evs
         .into_iter()
         .filter(|e| e.ts >= cutoff && ts_is_valid(&e.ts))
         .collect();
+    let subs = subscription_fees(dir, false);
     if bad > 0 {
         eprintln!("（跳过了 {bad} 行无法解析的记录）");
     }
@@ -1066,7 +1107,9 @@ fn cmd_bill_clients(dir: &Path, days: i64) -> i32 {
     let mut rows: Vec<(String, String, f64)> = Vec::new();
     let mut mixed: Vec<String> = Vec::new();
     for c in clients.keys() {
-        match ebouncer_core::bill::build(c, &window, &table, 0.0, true, None) {
+        match ebouncer_core::bill::build_with_subscriptions(
+            c, &window, &table, 0.0, true, None, &subs,
+        ) {
             Ok(inv) => rows.push((c.clone(), inv.currency, inv.total)),
             Err(_) => mixed.push(c.clone()),
         }
@@ -1294,6 +1337,7 @@ fn run(cmd: Cmd) -> i32 {
             out,
             pdf,
             bundle: make_bundle,
+            allocate,
             trial_clean: _,
             watermark: add_watermark,
             data_dir,
@@ -1316,16 +1360,38 @@ fn run(cmd: Cmd) -> i32 {
                 .into_iter()
                 .filter(|e| ts_is_valid(&e.ts) && e.ts >= cutoff)
                 .collect();
-            let table = load_rates(&dir);
+            let table = filter_rates_for_plan(load_rates(&dir), &dir);
+            let subscriptions = subscription_fees(&dir, allocate);
+            if !allocate {
+                for fee in &subscriptions {
+                    let mut users: HashSet<String> = HashSet::new();
+                    for e in &evs {
+                        if e.model.as_deref().and_then(plan::Provider::from_model)
+                            == plan::Provider::from_id(&fee.provider)
+                            && let Some(c) = &e.client
+                        {
+                            users.insert(c.clone());
+                        }
+                    }
+                    if users.len() > 1 {
+                        eprintln!(
+                            "⚠ {} 有 {} 个客户共用订阅；默认直通会各收全额月费，共享套餐请加 --allocate",
+                            fee.provider,
+                            users.len()
+                        );
+                    }
+                }
+            }
 
             let basis = ledger::file_sha256(&path).ok();
-            let inv = match ebouncer_core::bill::build(
+            let inv = match ebouncer_core::bill::build_with_subscriptions(
                 &client,
                 &evs,
                 &table,
                 markup,
                 watermark,
                 basis.clone(),
+                &subscriptions,
             ) {
                 Ok(inv) => inv,
                 Err(e) => {
@@ -1393,6 +1459,7 @@ fn run(cmd: Cmd) -> i32 {
                     markup,
                     watermark,
                     data_basis: basis.clone(),
+                    subscriptions: &subscriptions,
                     audit_dir: None,
                     ebc_version: env!("CARGO_PKG_VERSION"),
                 };
@@ -1527,6 +1594,7 @@ fn run(cmd: Cmd) -> i32 {
             client,
             days,
             markup,
+            allocate,
             watermark: add_watermark,
             with_audit,
             data_dir,
@@ -1550,7 +1618,8 @@ fn run(cmd: Cmd) -> i32 {
                 .iter()
                 .filter(|e| e.client.as_deref() == Some(client.as_str()))
                 .count();
-            let table = load_rates(&dir);
+            let table = filter_rates_for_plan(load_rates(&dir), &dir);
+            let subscriptions = subscription_fees(&dir, allocate);
             let basis = ledger::file_sha256(&path).ok();
             let req = bundle::BundleRequest {
                 client: &client,
@@ -1559,6 +1628,7 @@ fn run(cmd: Cmd) -> i32 {
                 markup,
                 watermark: add_watermark,
                 data_basis: basis,
+                subscriptions: &subscriptions,
                 audit_dir: with_audit.then_some(dir.as_path()),
                 ebc_version: env!("CARGO_PKG_VERSION"),
             };

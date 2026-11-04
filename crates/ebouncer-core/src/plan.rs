@@ -104,6 +104,18 @@ impl Provider {
         }
     }
 
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id.to_ascii_lowercase().as_str() {
+            "minimax" => Some(Provider::Minimax),
+            "deepseek" => Some(Provider::Deepseek),
+            "openrouter" => Some(Provider::Openrouter),
+            "anthropic" => Some(Provider::Anthropic),
+            "openai" => Some(Provider::Openai),
+            "custom" => Some(Provider::Custom),
+            _ => None,
+        }
+    }
+
     pub fn from_model(model: &str) -> Option<Self> {
         let m = model.to_ascii_lowercase();
         if m.contains("minimax") {

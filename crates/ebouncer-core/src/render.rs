@@ -275,6 +275,7 @@ mod tests {
             data_basis: Some("abcd1234".into()),
             rates_snapshot: vec![],
             rates_fingerprint: "feedface".into(),
+            subscriptions: vec![],
             watermark,
         }
     }

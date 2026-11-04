@@ -8,6 +8,7 @@ pub const DANGEROUS_CMDS: &str = include_str!("../dangerous-cmds.v0.1.yaml");
 pub mod rates {
     pub const DEEPSEEK: &str = include_str!("../rates/deepseek.yaml");
     pub const ANTHROPIC: &str = include_str!("../rates/anthropic.yaml");
+    pub const MINIMAX: &str = include_str!("../rates/minimax.yaml");
 }
 
 #[cfg(test)]

@@ -56,6 +56,8 @@ pub struct BundleRequest<'a> {
     pub markup: f64,
     pub watermark: bool,
     pub data_basis: Option<String>,
+    /// 订阅月费（直通/分摊）；空 = 纯按量
+    pub subscriptions: &'a [bill::SubscriptionFee],
     /// 数据目录（含 audit.jsonl / audit.head）；None = 不打包审计
     pub audit_dir: Option<&'a Path>,
     pub ebc_version: &'a str,
@@ -101,13 +103,14 @@ pub fn create(req: &BundleRequest) -> Result<(Vec<u8>, Manifest), String> {
     if slice.is_empty() {
         return Err(format!("客户「{}」在该周期内没有账目", req.client));
     }
-    let invoice = bill::build(
+    let invoice = bill::build_with_subscriptions(
         req.client,
         req.events,
         req.table,
         req.markup,
         req.watermark,
         req.data_basis.clone(),
+        req.subscriptions,
     )
     .map_err(|e| e.to_string())?;
 
@@ -272,13 +275,24 @@ pub fn verify_bytes(bytes: &[u8]) -> Result<VerifyReport, String> {
     if invoice.rates_fingerprint != manifest.rates_fingerprint {
         return Err("费率指纹与 manifest 不一致".to_string());
     }
-    let redo = bill::build(
+    let subs: Vec<bill::SubscriptionFee> = invoice
+        .subscriptions
+        .iter()
+        .map(|s| bill::SubscriptionFee {
+            provider: s.provider.clone(),
+            monthly: s.monthly,
+            currency: s.currency.clone(),
+            allocate: s.allocate,
+        })
+        .collect();
+    let redo = bill::build_with_subscriptions(
         &invoice.client,
         &events,
         &table,
         invoice.markup,
         invoice.watermark,
         invoice.data_basis.clone(),
+        &subs,
     )
     .map_err(|e| format!("复算失败：{e}"))?;
 
@@ -564,6 +578,7 @@ mod tests {
             markup: 0.2,
             watermark: true,
             data_basis: Some("deadbeef".into()),
+            subscriptions: &[],
             audit_dir: None,
             ebc_version: "0.1.0",
         })

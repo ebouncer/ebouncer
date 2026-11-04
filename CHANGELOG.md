@@ -5,7 +5,9 @@
 ## [Unreleased]
 
 ### 新增
-- **计费模式识别（`ebc plan`）**：`show` / `detect` / `set` / `forget`；自动探测 MiniMax（订阅 vs 按量）、DeepSeek（按量+余额）、OpenRouter、Anthropic、OpenAI、自定义端点。Key 只在内存使用，结果缓存 7 天、不落盘 Key；识别失败为 `unknown`，只记量、金额 0，不猜价。
+- **订阅月费账单**：`subscription` 模式的 provider 默认月费直通；`--allocate` 按该 provider 的 token 占比分摊（含其他客户）。订阅快照写入 `invoice.subscriptions`，证据包可复算。
+- **MiniMax 按量费率**：M3.1-Flash / M3 / `minimax` 别名（CNY）；只有 `ebc plan set minimax --mode payg` 才启用，订阅/unknown 不套 token 单价。
+- **计费模式识别（`ebc plan`）**：`show` / `detect` / `set` / `forget`；自动探测 MiniMax（订阅 vs 按量）、DeepSeek（按量+余额）、OpenRouter、Anthropic、OpenAI、自定义端点。Key 只在内存使用，结果缓存、不落盘 Key；识别失败为 `unknown`，只记量、金额 0，不猜价。
 - **安装体验**：Windows 原生 `install.ps1`（用户态、sha256 校验、自动写用户 PATH）；Linux `install.sh` 自动把 `~/.local/bin` 写进 shell rc；新增 [INSTALL.md](INSTALL.md)（Linux/Windows 安装、开票、升级/卸载、排错）。
 - **开票简化**：`ebc bill --client X --pdf`（等价 `--format pdf --out`），`--pdf --bundle` 一次出 PDF + 证据包。
 - **高峰/空闲时段化计价**：费率表新增 `time_tiers`（高峰窗口 + 固定 UTC 偏移 + 周末/节假日规则 + 空闲倍数），同一版本内的事件按本地时间落到高峰或空闲价档，账单按价档拆行并在 `price_source` 标注。DeepSeek 出厂表按官方定价页（2026-11-04 核实）配置：北京时间周一至周五 09:00-12:00、14:00-18:00 高峰，空闲半价；节假日需在 `holiday_dates` 显式列出（无法本地推导）。
