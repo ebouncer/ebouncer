@@ -20,6 +20,11 @@ pub struct ModelRate {
     pub output_per_mtok: f64,
     #[serde(default)]
     pub cache_read_per_mtok: f64,
+    /// 缓存写入单价（每百万 token）。缺省 0 表示该厂商不单独对写缓存收费
+    /// （如 DeepSeek：写入按"缓存未命中"输入价计，再单列会重复计价）；
+    /// Anthropic 这类单独计费的厂商才需要填。
+    #[serde(default)]
+    pub cache_write_per_mtok: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +114,10 @@ impl Price<'_> {
 
     pub fn cache_read_per_mtok(&self) -> f64 {
         self.model.cache_read_per_mtok * self.multiplier
+    }
+
+    pub fn cache_write_per_mtok(&self) -> f64 {
+        self.model.cache_write_per_mtok * self.multiplier
     }
 
     /// 账单 `price_source` 文案：厂商 + 生效版本 + 价档（含折扣倍数，便于复核）
@@ -300,7 +309,8 @@ pub fn estimate(ev: &LedgerEvent, table: &[VendorRates]) -> f64 {
     };
     let mut cost = ev.tokens_in as f64 * p.input_per_mtok() / 1e6
         + ev.tokens_out as f64 * p.output_per_mtok() / 1e6
-        + ev.cache_read as f64 * p.cache_read_per_mtok() / 1e6;
+        + ev.cache_read as f64 * p.cache_read_per_mtok() / 1e6
+        + ev.cache_write as f64 * p.cache_write_per_mtok() / 1e6;
     // Search/Fetch 是独立的按次 API，官方定价页未给时段折扣，故不乘时段倍数
     if let Some(tr) = p.tool_requests {
         cost += ev.requests_search as f64 * tr.search_per_k / 1000.0
@@ -364,7 +374,7 @@ mod tests {
         VendorRates {
             vendor: "deepseek".into(), currency: "CNY".into(), effective_from: eff.into(),
             time_tiers: None,
-            models: vec![ModelRate { name: "deepseek-chat".into(), input_per_mtok: input, output_per_mtok: output, cache_read_per_mtok: 0.0 }],
+            models: vec![ModelRate { name: "deepseek-chat".into(), input_per_mtok: input, output_per_mtok: output, cache_read_per_mtok: 0.0, cache_write_per_mtok: 0.0 }],
             tool_requests: Some(ToolRequestRate { search_per_k: per_k, fetch_per_k: per_k }),
         }
     }
@@ -451,6 +461,25 @@ mod tests {
         assert!((estimate(&e, &table) - 5.0).abs() < 1e-9);
         e.ts = "2026-11-05T00:00:00Z".into();
         assert!((estimate(&e, &table) - 8.0).abs() < 1e-9);
+    }
+
+    /// 缓存写入只有显式配置单价时才计费：默认 0 表示厂商不单独收费，
+    /// 已含在"缓存未命中"输入价里的那批 token 不会被再算一遍。
+    #[test]
+    fn cache_write_is_priced_only_when_configured() {
+        let mut t = entry("2026-01-01", 2.0, 8.0, 0.0);
+        t.models[0].cache_write_per_mtok = 3.75;
+        let mut e = ev();
+        e.tokens_in = 0;
+        e.tokens_out = 0;
+        e.requests_search = 0;
+        e.cache_read = 0;
+        e.cache_write = 1_000_000;
+        let table = std::slice::from_ref(&t);
+        assert!((estimate(&e, table) - 3.75).abs() < 1e-9, "configured={}", estimate(&e, table));
+        t.models[0].cache_write_per_mtok = 0.0;
+        let table = std::slice::from_ref(&t);
+        assert_eq!(estimate(&e, table), 0.0, "未配置时不得重复计费");
     }
 
     #[test]

@@ -21,7 +21,7 @@
         "required": ["tool", "category", "qty", "unit_price_per_k_or_mtok", "amount"],
         "properties": {
           "tool": { "type": "string", "description": "claude-code | codex | dsh | ..." },
-          "category": { "type": "string", "enum": ["token_input", "token_output", "cache_read", "search_request", "fetch_request"] },
+          "category": { "type": "string", "enum": ["token_input", "token_output", "cache_read", "cache_write", "search_request", "fetch_request"], "description": "cache_write 仅在费率表为该模型配置了 cache_write_per_mtok 时才有金额（Anthropic 语义）；DeepSeek 不单独收费，写缓存已含在缓存未命中的输入价里" },
           "qty": { "type": "number", "minimum": 0 },
           "unit_price_per_k_or_mtok": { "type": "number", "minimum": 0 },
           "amount": { "type": "number", "minimum": 0 },

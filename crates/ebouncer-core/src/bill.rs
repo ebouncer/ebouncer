@@ -58,6 +58,7 @@ struct UnitPrices {
     input: f64,
     output: f64,
     cache_read: f64,
+    cache_write: f64,
     search: Option<f64>,
     fetch: Option<f64>,
     source: String,
@@ -68,6 +69,7 @@ struct Qty {
     tokens_in: u64,
     tokens_out: u64,
     cache_read: u64,
+    cache_write: u64,
     requests_search: u64,
     requests_fetch: u64,
 }
@@ -98,6 +100,7 @@ fn resolve_price<'a>(
                 input: 0.0,
                 output: 0.0,
                 cache_read: 0.0,
+                cache_write: 0.0,
                 search: Some(tr.search_per_k),
                 fetch: Some(tr.fetch_per_k),
                 source: format!(
@@ -119,6 +122,7 @@ fn resolve_price<'a>(
             input: p.input_per_mtok(),
             output: p.output_per_mtok(),
             cache_read: p.cache_read_per_mtok(),
+            cache_write: p.cache_write_per_mtok(),
             search: p.tool_requests.map(|t| t.search_per_k),
             fetch: p.tool_requests.map(|t| t.fetch_per_k),
             source: p.source(),
@@ -175,6 +179,7 @@ pub fn build(
         entry.0.tokens_in += e.tokens_in;
         entry.0.tokens_out += e.tokens_out;
         entry.0.cache_read += e.cache_read;
+        entry.0.cache_write += e.cache_write;
         entry.0.requests_search += e.requests_search;
         entry.0.requests_fetch += e.requests_fetch;
     }
@@ -192,6 +197,10 @@ pub fn build(
                     }
                     let amount = qty as f64 * unit / div;
                     raw_total += amount;
+                    // 记了量但该条目没单独定价（如 DeepSeek 的写缓存已含在未命中输入价里）：
+                    // 保留 0 元行并写明原因，避免被误读成"漏算"。
+                    let note = (category == "cache_write" && unit == 0.0)
+                        .then(|| "该费率条目未单独收取缓存写入费用（默认 0，写入已含在缓存未命中输入价内）".to_string());
                     items.push(BillItem {
                         tool: tool.clone(),
                         category: category.to_string(),
@@ -199,12 +208,13 @@ pub fn build(
                         unit_price_per_k_or_mtok: unit,
                         amount,
                         price_source: u.source.clone(),
-                        note: None,
+                        note,
                     });
                 };
                 push("token_input", q.tokens_in, u.input, 1e6);
                 push("token_output", q.tokens_out, u.output, 1e6);
                 push("cache_read", q.cache_read, u.cache_read, 1e6);
+                push("cache_write", q.cache_write, u.cache_write, 1e6);
                 if let Some(v) = u.search {
                     push("search_request", q.requests_search, v, 1e3);
                 }
@@ -218,6 +228,7 @@ pub fn build(
                     ("token_input", q.tokens_in),
                     ("token_output", q.tokens_out),
                     ("cache_read", q.cache_read),
+                    ("cache_write", q.cache_write),
                     ("search_request", q.requests_search),
                     ("fetch_request", q.requests_fetch),
                 ] {
@@ -302,7 +313,7 @@ mod tests {
         vec![VendorRates {
             vendor: "deepseek".into(), currency: "CNY".into(), effective_from: "2026-09-01".into(),
             time_tiers: None,
-            models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 1.0, output_per_mtok: 2.0, cache_read_per_mtok: 0.1 }],
+            models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 1.0, output_per_mtok: 2.0, cache_read_per_mtok: 0.1, cache_write_per_mtok: 0.0 }],
             tool_requests: Some(ToolRequestRate { search_per_k: 5.0, fetch_per_k: 5.0 }),
         }]
     }
@@ -334,6 +345,55 @@ mod tests {
         assert!(csv.contains("费率表指纹:"), "{csv}");
     }
 
+    /// 回归（2026-11-04）：cache_write 必须单列成行并随价档打折
+    ///（此前只记量、账单里金额恒为 0，Anthropic 语义下会系统性少算）。
+    #[test]
+    fn bills_cache_write_with_tier_multiplier() {
+        let table = vec![VendorRates {
+            vendor: "deepseek".into(), currency: "CNY".into(),
+            effective_from: "2026-11-01".into(),
+            time_tiers: Some(TimeTiers {
+                peak_windows: vec!["09:00-12:00".into()],
+                utc_offset_minutes: 480,
+                weekdays_only: true,
+                holiday_dates: vec![],
+                off_peak_multiplier: 0.5,
+            }),
+            models: vec![ModelRate {
+                name: "cached-model".into(), input_per_mtok: 3.0, output_per_mtok: 15.0,
+                cache_read_per_mtok: 0.3, cache_write_per_mtok: 3.75,
+            }],
+            tool_requests: None,
+        }];
+        let mut peak = ev(Some("ACME"), "cached-model", 0, 0, 0, 0, 0);
+        peak.ts = "2026-11-03T02:00:00Z".into(); // 周二 10:00 北京 → 高峰
+        peak.cache_write = 1_000_000;
+        let mut idle = ev(Some("ACME"), "cached-model", 0, 0, 0, 0, 0);
+        idle.ts = "2026-11-03T15:00:00Z".into(); // 周二 23:00 北京 → 空闲半价
+        idle.cache_write = 1_000_000;
+        let inv = build("ACME", &[peak, idle], &table, 0.0, true, None);
+        assert_eq!(inv.items.len(), 2, "{:?}", inv.items);
+        assert!(inv.items.iter().all(|i| i.category == "cache_write"));
+        assert!((inv.total - (3.75 + 1.875)).abs() < 1e-9, "total={}", inv.total);
+        assert!(inv.items.iter().any(|i| i.price_source.contains("高峰")));
+        assert!(inv.items.iter().any(|i| i.price_source.contains("空闲")));
+    }
+
+    /// 未配置 cache_write 单价时仍保留 0 元行并注明原因，不静默丢量。
+    #[test]
+    fn zero_priced_cache_write_row_is_explained() {
+        let mut e = ev(Some("ACME"), "deepseek-flash", 0, 0, 0, 0, 0);
+        e.cache_write = 500_000;
+        let inv = build("ACME", &[e], &table(), 0.0, true, None);
+        let row = inv
+            .items
+            .iter()
+            .find(|i| i.category == "cache_write")
+            .expect("应保留 cache_write 行");
+        assert_eq!(row.amount, 0.0);
+        assert!(row.note.as_deref().unwrap_or("").contains("未单独收取"), "{:?}", row.note);
+    }
+
     /// 账单自带价格依据：只冻结本单命中的费率条目，表内顺序不影响指纹，
     /// 而用到的价格一变指纹必须变（复现性校验）。
     #[test]
@@ -341,13 +401,13 @@ mod tests {
         let v1 = VendorRates {
             vendor: "deepseek".into(), currency: "CNY".into(), effective_from: "2026-09-01".into(),
             time_tiers: None,
-            models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 1.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0 }],
+            models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 1.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0, cache_write_per_mtok: 0.0 }],
             tool_requests: None,
         };
         let v2 = VendorRates {
             vendor: "deepseek".into(), currency: "CNY".into(), effective_from: "2026-11-01".into(),
             time_tiers: None,
-            models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 2.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0 }],
+            models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 2.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0, cache_write_per_mtok: 0.0 }],
             tool_requests: None,
         };
         let mut e = ev(Some("ACME"), "deepseek-flash", 1_000_000, 0, 0, 0, 0);
@@ -402,14 +462,14 @@ mod tests {
                 vendor: "deepseek".into(), currency: "CNY".into(),
                 effective_from: "2026-09-01".into(),
                 time_tiers: None,
-                models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 1.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0 }],
+                models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 1.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0, cache_write_per_mtok: 0.0 }],
                 tool_requests: None,
             },
             VendorRates {
                 vendor: "deepseek".into(), currency: "CNY".into(),
                 effective_from: "2026-11-01".into(),
                 time_tiers: None,
-                models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 2.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0 }],
+                models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 2.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0, cache_write_per_mtok: 0.0 }],
                 tool_requests: None,
             },
         ];
@@ -439,7 +499,7 @@ mod tests {
                 holiday_dates: vec![],
                 off_peak_multiplier: 0.5,
             }),
-            models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 2.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0 }],
+            models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 2.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0, cache_write_per_mtok: 0.0 }],
             tool_requests: None,
         }];
         let mut peak = ev(Some("ACME"), "deepseek-flash", 1_000_000, 0, 0, 0, 0);

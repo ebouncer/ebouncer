@@ -786,6 +786,7 @@ mod tests {
                 input_per_mtok,
                 output_per_mtok: 0.0,
                 cache_read_per_mtok: 0.0,
+                cache_write_per_mtok: 0.0,
             }],
             tool_requests: None,
         }
