@@ -1,3 +1,5 @@
 /target/
 *.jsonl.bak
 .DS_Store
+# ebc tag 写在本地的客户标记，不应入库
+.ebouncer/
