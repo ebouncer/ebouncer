@@ -79,6 +79,23 @@ ebc bill --client "测试甲方" --pdf --bundle   # PDF + 可验证证据包
 - 包月/订阅计划（如 MiniMax Token Plan）没有按 token 单价：只记量、金额 0，不要按 token 给客户开票；月费分摊在 v0.2。
 - 同一客户跨币种（CNY + USD）会被明确拒绝；v0.1 不做汇率换算。
 
+### 计费模式（MiniMax / 第三方）
+
+包月/订阅和按量 Key 的价格口径不同，先识别一次：
+
+```bash
+ebc plan show
+ebc plan detect            # 读环境变量/Claude 配置里的 Key，联网查询一次；不落盘
+ebc plan set minimax --mode subscription --tier go
+ebc plan set minimax --mode payg
+```
+
+- `detect` 支持 MiniMax / DeepSeek / OpenRouter / Anthropic / OpenAI / 自定义端点
+- Key 只在内存中使用；识别结果存 `~/.ebouncer/plans.yaml`，不含 Key
+- 非交互环境需加 `--yes`；从 stdin 粘贴用 `--key-stdin --provider <name>`
+- 识别不了 → `unknown`：只记量、金额 0，不套原厂价
+- DeepSeek API 只有按量；MiniMax 订阅 Key 可识别为 `subscription`
+
 ## 4. 常用命令
 
 | 目的 | 命令 |

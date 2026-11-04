@@ -6,6 +6,7 @@ pub mod audit;
 pub mod bill;
 pub mod bundle;
 pub mod ledger;
+pub mod plan;
 pub mod rates;
 pub mod redact;
 pub mod render;

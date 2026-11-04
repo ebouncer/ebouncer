@@ -12,11 +12,12 @@ use ebouncer_adapters::{
     Adapter, claude_code::ClaudeCodeAdapter, codex::CodexAdapter, dsh::DshAdapter,
     normalize_project,
 };
-use ebouncer_core::{audit, bundle, ledger, rates, rules};
+use ebouncer_core::{audit, bundle, ledger, plan, rates, rules};
 mod hook;
 use std::collections::{BTreeMap, HashSet};
-use std::io::BufRead;
+use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command as OsCommand, Stdio};
 
 #[derive(Parser)]
 #[command(
@@ -93,6 +94,13 @@ enum Cmd {
         #[arg(long)]
         data_dir: Option<PathBuf>,
     },
+    /// 计费模式：显示 / 自动识别 / 手动设置（provider 是否订阅、是否按量）
+    Plan {
+        #[command(subcommand)]
+        cmd: PlanCmd,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
     /// 生成可携带证据包（账单 + 账本切片 + 费率快照；可含审计链）
     Bundle {
         #[arg(long)]
@@ -158,6 +166,45 @@ enum BillFmt {
     Csv,
     Json,
     Pdf,
+}
+
+#[derive(Subcommand)]
+enum PlanCmd {
+    /// 显示已识别的计费模式
+    Show,
+    /// 自动识别（读环境变量/Claude 配置中的 Key，联网查询一次；不落盘 Key）
+    Detect {
+        /// 只识别指定 provider：minimax / deepseek / openrouter / anthropic / openai / custom
+        #[arg(long)]
+        provider: Option<String>,
+        /// 从 stdin 读一行 Key（适合脚本/一次性粘贴；不会落盘）
+        #[arg(long)]
+        key_stdin: bool,
+        /// 跳过确认（非交互环境必须显式传）
+        #[arg(long)]
+        yes: bool,
+        /// 覆盖已有的手动配置
+        #[arg(long)]
+        force: bool,
+    },
+    /// 手动设置（覆盖自动识别）
+    Set {
+        provider: String,
+        #[arg(long)]
+        mode: String,
+        #[arg(long)]
+        monthly: Option<f64>,
+        #[arg(long)]
+        tier: Option<String>,
+        #[arg(long)]
+        currency: Option<String>,
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        base_url: Option<String>,
+    },
+    /// 删除识别结果（不传 provider = 清空）
+    Forget { provider: Option<String> },
 }
 
 fn home_dir() -> PathBuf {
@@ -532,6 +579,462 @@ fn cmd_tag(client: &str, proj_dir: &Path, data_dir: &Path) -> i32 {
     0
 }
 
+fn cmd_plan(cmd: PlanCmd, dir: &Path) -> i32 {
+    match cmd {
+        PlanCmd::Show => {
+            let plans = plan::load(dir);
+            if plans.providers.is_empty() {
+                println!("还没有识别结果。跑：ebc plan detect");
+                return 0;
+            }
+            println!(
+                "{:<12} {:<14} {:<8} {:>10} {:<8} {:<20}",
+                "provider", "mode", "tier", "monthly", "source", "checked_at"
+            );
+            for (id, e) in &plans.providers {
+                println!(
+                    "{:<12} {:<14} {:<8} {:>10} {:<8} {:<20}",
+                    id,
+                    e.mode,
+                    e.tier.as_deref().unwrap_or("-"),
+                    e.monthly
+                        .map(|m| format!("{:.0} {}", m, e.currency.as_deref().unwrap_or("")))
+                        .unwrap_or_else(|| "-".into()),
+                    if e.source.is_empty() { "-" } else { &e.source },
+                    e.checked_at.as_deref().unwrap_or("-"),
+                );
+            }
+            0
+        }
+        PlanCmd::Forget { provider } => {
+            let mut plans = plan::load(dir);
+            if let Some(p) = provider {
+                plans.providers.remove(&p.to_ascii_lowercase());
+            } else {
+                plans.providers.clear();
+            }
+            if let Err(e) = plan::save(dir, &plans) {
+                eprintln!("保存失败：{e}");
+                return 1;
+            }
+            println!("已清除计费模式缓存");
+            0
+        }
+        PlanCmd::Set {
+            provider,
+            mode,
+            monthly,
+            tier,
+            currency,
+            from,
+            base_url,
+        } => {
+            let mode = mode.to_ascii_lowercase();
+            if ![plan::MODE_SUBSCRIPTION, plan::MODE_PAYG, plan::MODE_UNKNOWN]
+                .contains(&mode.as_str())
+            {
+                eprintln!("mode 只能是 subscription / payg / unknown");
+                return 1;
+            }
+            let mut e = plan::PlanEntry::new(&mode, "manual");
+            e.tier = tier;
+            e.monthly = monthly.or_else(|| e.tier.as_deref().and_then(tier_monthly));
+            e.currency = currency.or_else(|| {
+                if mode == plan::MODE_SUBSCRIPTION {
+                    Some("CNY".into())
+                } else {
+                    None
+                }
+            });
+            e.from = Some(from.unwrap_or_else(|| Utc::now().format("%Y-%m").to_string()));
+            e.base_url = base_url;
+            e.checked_at = Some(Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+            let mut plans = plan::load(dir);
+            plans.providers.insert(provider.to_ascii_lowercase(), e);
+            if let Err(err) = plan::save(dir, &plans) {
+                eprintln!("保存失败：{err}");
+                return 1;
+            }
+            println!("已保存（source=manual）");
+            0
+        }
+        PlanCmd::Detect {
+            provider,
+            key_stdin,
+            yes,
+            force,
+        } => cmd_plan_detect(dir, provider, key_stdin, yes, force),
+    }
+}
+
+fn tier_monthly(tier: &str) -> Option<f64> {
+    match tier.to_ascii_lowercase().as_str() {
+        "go" => Some(49.0),
+        "explore" => Some(119.0),
+        "build" => Some(469.0),
+        _ => None,
+    }
+}
+
+fn provider_by_id(id: &str) -> Option<plan::Provider> {
+    match id.to_ascii_lowercase().as_str() {
+        "minimax" => Some(plan::Provider::Minimax),
+        "deepseek" => Some(plan::Provider::Deepseek),
+        "openrouter" => Some(plan::Provider::Openrouter),
+        "anthropic" => Some(plan::Provider::Anthropic),
+        "openai" => Some(plan::Provider::Openai),
+        "custom" => Some(plan::Provider::Custom),
+        _ => None,
+    }
+}
+
+fn key_envs(p: plan::Provider) -> &'static [&'static str] {
+    match p {
+        plan::Provider::Minimax => &["MINIMAX_API_KEY", "MINIMAX_KEY"],
+        plan::Provider::Deepseek => &["DEEPSEEK_API_KEY"],
+        plan::Provider::Openrouter => &["OPENROUTER_API_KEY"],
+        plan::Provider::Anthropic => &["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"],
+        plan::Provider::Openai => &["OPENAI_API_KEY"],
+        plan::Provider::Custom => &["EBC_API_KEY"],
+    }
+}
+
+fn env_key(p: plan::Provider) -> Option<String> {
+    for name in key_envs(p) {
+        if let Ok(v) = std::env::var(name) {
+            let v = v.trim();
+            if !v.is_empty() {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 读取 Claude Code settings.json 的 env（只读；不落盘）。
+fn claude_settings_env() -> serde_json::Map<String, serde_json::Value> {
+    let p = home_dir().join(".claude").join("settings.json");
+    let Ok(s) = std::fs::read_to_string(p) else {
+        return Default::default();
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) else {
+        return Default::default();
+    };
+    v.get("env")
+        .and_then(serde_json::Value::as_object)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn claude_env_str(env: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
+    env.get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
+fn key_for_provider(p: plan::Provider, key_stdin: bool) -> Option<String> {
+    if let Some(k) = env_key(p) {
+        return Some(k);
+    }
+    let env = claude_settings_env();
+    if matches!(
+        p,
+        plan::Provider::Anthropic | plan::Provider::Minimax | plan::Provider::Custom
+    ) && let Some(k) = claude_env_str(&env, "ANTHROPIC_AUTH_TOKEN")
+        .or_else(|| claude_env_str(&env, "ANTHROPIC_API_KEY"))
+    {
+        return Some(k);
+    }
+    if key_stdin {
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line).is_ok() {
+            let k = line.trim();
+            if !k.is_empty() {
+                return Some(k.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn probe_url(key: &str, url: &str) -> Result<(u16, String), String> {
+    let bin = std::env::var("EBC_CURL").unwrap_or_else(|_| "curl".into());
+    let mut child = OsCommand::new(bin)
+        .args([
+            "-sS",
+            "--max-time",
+            "10",
+            "--config",
+            "-",
+            "-w",
+            "\n%{http_code}",
+            url,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("无法启动 curl：{e}"))?;
+    let cfg = format!(
+        "header = \"Authorization: Bearer {}\"\nheader = \"Accept: application/json\"\nheader = \"anthropic-version: 2023-06-01\"\n",
+        key.replace('\\', "\\\\").replace('"', "\\\"")
+    );
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(cfg.as_bytes())
+            .map_err(|e| format!("写 curl 配置失败：{e}"))?;
+    }
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("curl 执行失败：{e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("网络请求失败：{}", err.trim()));
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut parts = text.rsplitn(2, '\n');
+    let code = parts.next().unwrap_or("").trim();
+    let body = parts.next().unwrap_or("").to_string();
+    let status = code
+        .parse::<u16>()
+        .map_err(|_| format!("curl 未返回 HTTP 状态码（输出：{}）", text.trim()))?;
+    Ok((status, body))
+}
+
+fn probe_provider(
+    p: plan::Provider,
+    key: &str,
+    base_url: Option<&str>,
+) -> Result<plan::PlanEntry, String> {
+    let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let mut entry = plan::PlanEntry::new(plan::MODE_UNKNOWN, "auto");
+    entry.checked_at = Some(now);
+    match p {
+        plan::Provider::Minimax => {
+            let (code, body) = probe_url(key, "https://www.minimax.cn/v1/token_plan/remains")?;
+            match code {
+                200 => {
+                    entry.mode = plan::MODE_SUBSCRIPTION.into();
+                    entry.note = Some("订阅 Key（M Plan / Token Plan）".into());
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
+                        let tier = ["tier", "plan", "plan_type"]
+                            .iter()
+                            .find_map(|k| v.get(*k).and_then(serde_json::Value::as_str))
+                            .map(|s| s.to_ascii_lowercase());
+                        if let Some(t) = tier {
+                            entry.monthly = tier_monthly(&t);
+                            entry.tier = Some(t);
+                            entry.currency = Some("CNY".into());
+                        }
+                    }
+                }
+                401 | 403 | 404 => {
+                    entry.mode = plan::MODE_PAYG.into();
+                    entry.note = Some("非订阅 Key，按量计费".into());
+                }
+                _ => return Err(format!("MiniMax 返回 HTTP {code}")),
+            }
+        }
+        plan::Provider::Deepseek => {
+            let (code, body) = probe_url(key, "https://api.deepseek.com/user/balance")?;
+            match code {
+                200 => {
+                    entry.mode = plan::MODE_PAYG.into();
+                    entry.note = Some("DeepSeek 按量计费（无 API 订阅套餐）".into());
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body)
+                        && let Some(b) = v
+                            .get("balance_infos")
+                            .and_then(serde_json::Value::as_array)
+                            .and_then(|a| a.first())
+                    {
+                        let cur = b
+                            .get("currency")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("CNY");
+                        let total = b
+                            .get("total_balance")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("?");
+                        entry.note = Some(format!("DeepSeek 按量；余额 {total} {cur}"));
+                    }
+                }
+                401 | 403 => return Err("DeepSeek Key 无效".into()),
+                _ => return Err(format!("DeepSeek 返回 HTTP {code}")),
+            }
+        }
+        plan::Provider::Openrouter => {
+            let (code, _) = probe_url(key, "https://openrouter.ai/api/v1/credits")?;
+            match code {
+                200 => {
+                    entry.mode = plan::MODE_PAYG.into();
+                    entry.note = Some("OpenRouter 按量/额度".into());
+                }
+                401 | 403 => return Err("OpenRouter Key 无效".into()),
+                _ => return Err(format!("OpenRouter 返回 HTTP {code}")),
+            }
+        }
+        plan::Provider::Anthropic => {
+            let (code, _) = probe_url(key, "https://api.anthropic.com/v1/models")?;
+            match code {
+                200 => {
+                    entry.mode = plan::MODE_PAYG.into();
+                    entry.note = Some("Anthropic API 按量".into());
+                }
+                401 | 403 => return Err("Anthropic Key 无效".into()),
+                _ => return Err(format!("Anthropic 返回 HTTP {code}")),
+            }
+        }
+        plan::Provider::Openai => {
+            let (code, _) = probe_url(key, "https://api.openai.com/v1/models")?;
+            match code {
+                200 => {
+                    entry.mode = plan::MODE_PAYG.into();
+                    entry.note = Some("OpenAI API 按量".into());
+                }
+                401 | 403 => return Err("OpenAI Key 无效".into()),
+                _ => return Err(format!("OpenAI 返回 HTTP {code}")),
+            }
+        }
+        plan::Provider::Custom => {
+            let base = base_url
+                .map(str::to_string)
+                .or_else(|| std::env::var("EBC_BASE_URL").ok())
+                .ok_or_else(|| "custom provider 需要 --base-url 或 EBC_BASE_URL".to_string())?;
+            let url = format!("{}/models", base.trim_end_matches('/'));
+            let (code, _) = probe_url(key, &url)?;
+            match code {
+                200 => {
+                    entry.mode = plan::MODE_PAYG.into();
+                    entry.note = Some(format!("第三方/自定义端点 {url}；费率需自定义"));
+                    entry.base_url = Some(base);
+                }
+                401 | 403 => return Err("自定义端点 Key 无效".into()),
+                _ => return Err(format!("自定义端点返回 HTTP {code}")),
+            }
+        }
+    }
+    Ok(entry)
+}
+
+fn cmd_plan_detect(
+    dir: &Path,
+    provider: Option<String>,
+    key_stdin: bool,
+    yes: bool,
+    force: bool,
+) -> i32 {
+    let mut providers: Vec<plan::Provider> = Vec::new();
+    if let Some(p) = &provider {
+        match provider_by_id(p) {
+            Some(p) => providers.push(p),
+            None => {
+                eprintln!(
+                    "未知 provider：{p}（minimax/deepseek/openrouter/anthropic/openai/custom）"
+                );
+                return 1;
+            }
+        }
+    } else {
+        for var in ["ANTHROPIC_BASE_URL", "OPENAI_BASE_URL", "EBC_BASE_URL"] {
+            if let Ok(u) = std::env::var(var)
+                && let Some(p) = plan::Provider::from_base_url(&u)
+                && !providers.contains(&p)
+            {
+                providers.push(p);
+            }
+        }
+        let env = claude_settings_env();
+        if let Some(u) = claude_env_str(&env, "ANTHROPIC_BASE_URL")
+            && let Some(p) = plan::Provider::from_base_url(&u)
+            && !providers.contains(&p)
+        {
+            providers.push(p);
+        }
+        for p in [
+            plan::Provider::Minimax,
+            plan::Provider::Deepseek,
+            plan::Provider::Openrouter,
+            plan::Provider::Anthropic,
+            plan::Provider::Openai,
+        ] {
+            if env_key(p).is_some() && !providers.contains(&p) {
+                providers.push(p);
+            }
+        }
+        // 账本里出现过的模型
+        let path = dir.join("ledger.jsonl");
+        if let Ok((evs, _)) = ledger::read_all(&path) {
+            for e in &evs {
+                if let Some(m) = &e.model
+                    && let Some(p) = plan::Provider::from_model(m)
+                    && !providers.contains(&p)
+                {
+                    providers.push(p);
+                }
+            }
+        }
+    }
+    if providers.is_empty() {
+        println!("没有发现可识别的 provider。可手动：ebc plan set <provider> --mode payg");
+        return 0;
+    }
+    if !yes {
+        if !std::io::stdin().is_terminal() {
+            eprintln!("非交互环境需要 --yes 才允许读取 Key 并联网");
+            return 1;
+        }
+        print!(
+            "将读取环境变量/Claude 配置中的 Key，并向厂商查询 {} 个 provider；Key 不落盘。继续？[y/N] ",
+            providers.len()
+        );
+        let _ = std::io::stdout().flush();
+        let mut s = String::new();
+        if std::io::stdin().read_line(&mut s).is_err() || !s.trim().eq_ignore_ascii_case("y") {
+            println!("已取消");
+            return 0;
+        }
+    }
+    if key_stdin && provider.is_none() {
+        eprintln!("--key-stdin 需要同时指定 --provider（一次只粘贴一个 Key）");
+        return 1;
+    }
+    let mut plans = plan::load(dir);
+    let mut ok = 0;
+    for p in providers {
+        let id = p.id();
+        if !force
+            && plans
+                .providers
+                .get(id)
+                .map(|e| e.source == "manual")
+                .unwrap_or(false)
+        {
+            println!("{id}: 已有手动配置，跳过（--force 可覆盖）");
+            continue;
+        }
+        let Some(key) = key_for_provider(p, key_stdin) else {
+            println!("{id}: 未找到 Key（可设环境变量或 --key-stdin）");
+            continue;
+        };
+        match probe_provider(p, &key, None) {
+            Ok(e) => {
+                println!("{id}: {} {}", e.mode, e.note.clone().unwrap_or_default());
+                plans.providers.insert(id.to_string(), e);
+                ok += 1;
+            }
+            Err(err) => eprintln!("{id}: {err}"),
+        }
+    }
+    if let Err(e) = plan::save(dir, &plans) {
+        eprintln!("保存失败：{e}");
+        return 1;
+    }
+    println!("已识别 {ok} 个 provider；结果已缓存，`ebc plan detect` 可刷新");
+    0
+}
+
 fn cmd_bill_clients(dir: &Path, days: i64) -> i32 {
     let (evs, bad) =
         ledger::read_all(&dir.join("ledger.jsonl")).unwrap_or_else(|_| (Vec::new(), 0));
@@ -769,6 +1272,8 @@ fn run(cmd: Cmd) -> i32 {
             println!("重建完成：{n} 条事件从宿主日志重新入账");
             0
         }
+
+        Cmd::Plan { cmd, data_dir } => cmd_plan(cmd, &resolve_data_dir(&data_dir)),
 
         Cmd::Tag {
             client,
