@@ -15,6 +15,7 @@
 ### 变更
 - **定位纠正（外部评审反馈）**：README/BETA/SECURITY 不再声称"宿主做不到命令级拦截/留痕"——Claude Code / Codex / Cursor 均已自带 hooks，且支持托管配置锁定。现在明确：v0.1 的 shell 钩子只覆盖**交互式终端里人敲的命令**，agent 的 `bash -c` 不经过；文本规则可被 `python -c`/变量拼接/`curl|sh` 绕过；同一 UID 下审计只能"可发现"、不能"不可篡改"。差异化改为跨工具账本/开票/证据可携带，宿主原生 hook 适配排进 v0.2。
 - `ebc --help` 定位改为"跨工具 AI 花费账本与审计证据层"；Codex 事件币种改为 USD（原为 CNY，与其真实计费一致）。
+- **发布渠道**：rc tag 自动标记 prerelease；`install.sh` 默认 `auto`（取最新 release，含 rc），`EBC_CHANNEL=stable` 只取稳定版；install-smoke 修复"空账本 `ebc ledger` 退出 1"的误判（rc.3–rc.5 卡在这里，rc.6 通过）。
 
 ### 修复
 - **审计链尾部截断检测**：`audit-verify` 此前只校验链内 `prev_hash`，删掉最后 N 条仍报"完好"（2026-11-04 实测）。现在每次 append 原子更新 `audit.head` checkpoint（seq + hash），校验时对比：删尾部、删整文件、替换末条都会报"被截断"（退出码 2）；checkpoint 缺失时显式降级提示"无法检测截断"，不假装校验过。新增 4 条回归测试。
