@@ -34,6 +34,9 @@ pub struct SubscriptionFee {
     pub currency: String,
     #[serde(default)]
     pub allocate: bool,
+    /// 生效月份 YYYY-MM；早于该月的用量不收月费
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
 }
 
 /// 账单里的订阅月费快照（可随证据包复算）。
@@ -43,8 +46,12 @@ pub struct SubscriptionLine {
     pub monthly: f64,
     pub currency: String,
     pub allocate: bool,
+    /// 计费的自然月数（有该 provider 用量的月份）
+    pub months: u32,
     pub tokens: u64,
     pub amount: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -328,27 +335,52 @@ pub fn build_with_subscriptions(
         entry.0.requests_fetch += e.requests_fetch;
     }
 
-    // 订阅月费：默认直通；allocate=true 时按该 provider 的 token 占比分摊（含其他客户的事件）。
+    // 订阅月费：按自然月计；默认直通，allocate=true 时按月内 token 占比分摊。
     let mut sub_lines: Vec<SubscriptionLine> = Vec::new();
     for fee in subscriptions {
         let pid = fee.provider.to_ascii_lowercase();
-        let total_tokens: u64 = events
-            .iter()
-            .filter(|e| event_provider(e).map(|p| p.id()) == Some(pid.as_str()))
-            .map(event_tokens)
-            .sum();
-        let client_tokens: u64 = evts
-            .iter()
-            .filter(|e| event_provider(e).map(|p| p.id()) == Some(pid.as_str()))
-            .map(|e| event_tokens(e))
-            .sum();
+        // month -> (client_tokens, total_tokens)
+        let mut months: std::collections::BTreeMap<String, (u64, u64)> = Default::default();
+        for e in events {
+            if event_provider(e).map(|p| p.id()) != Some(pid.as_str()) {
+                continue;
+            }
+            let Some(month) = e.ts.get(0..7) else {
+                continue;
+            };
+            if month.len() != 7 {
+                continue;
+            }
+            if let Some(from) = &fee.from
+                && month < from.as_str()
+            {
+                continue;
+            }
+            let t = event_tokens(e);
+            let slot = months.entry(month.to_string()).or_insert((0, 0));
+            slot.1 = slot.1.saturating_add(t);
+            if e.client.as_deref() == Some(client) {
+                slot.0 = slot.0.saturating_add(t);
+            }
+        }
+        let client_tokens: u64 = months.values().map(|(c, _)| *c).sum();
         if client_tokens == 0 {
             continue;
         }
-        let amount = if fee.allocate && total_tokens > 0 {
-            fee.monthly * (client_tokens as f64 / total_tokens as f64)
+        let month_count = months.len() as u32;
+        let amount = if fee.allocate {
+            months
+                .values()
+                .map(|(c, t)| {
+                    if *t > 0 {
+                        fee.monthly * (*c as f64 / *t as f64)
+                    } else {
+                        0.0
+                    }
+                })
+                .sum()
         } else {
-            fee.monthly
+            fee.monthly * month_count as f64
         };
         if amount <= 0.0 {
             continue;
@@ -359,8 +391,10 @@ pub fn build_with_subscriptions(
             monthly: fee.monthly,
             currency: fee.currency.clone(),
             allocate: fee.allocate,
+            months: month_count,
             tokens: client_tokens,
             amount,
+            from: fee.from.clone(),
         });
     }
 
@@ -473,8 +507,8 @@ pub fn build_with_subscriptions(
                 }
             ),
             note: Some(format!(
-                "月费 {} {}；客户 tokens {}",
-                s.monthly, s.currency, s.tokens
+                "月费 {} {} × {} 个月；客户 tokens {}",
+                s.monthly, s.currency, s.months, s.tokens
             )),
         });
         raw_total += s.amount;
@@ -967,6 +1001,7 @@ mod tests {
             monthly: 40.0,
             currency: "CNY".into(),
             allocate: false,
+            from: None,
         };
         let inv = build_with_subscriptions(
             "ACME",
@@ -988,11 +1023,29 @@ mod tests {
             monthly: 40.0,
             currency: "CNY".into(),
             allocate: true,
+            from: None,
         };
         let inv =
             build_with_subscriptions("ACME", &[a, b], &[], 0.0, false, None, &[allocated]).unwrap();
         assert!((inv.items.last().unwrap().amount - 10.0).abs() < 1e-9);
         assert!((inv.total - 10.0).abs() < 1e-9);
+
+        // 跨两个月：直通月费按有量的自然月数计
+        let mut jan = ev(Some("ACME"), "minimax", 1_000_000, 0, 0, 0, 0);
+        jan.ts = "2026-01-15T00:00:00Z".into();
+        let mut feb = jan.clone();
+        feb.ts = "2026-02-15T00:00:00Z".into();
+        let fee = SubscriptionFee {
+            provider: "minimax".into(),
+            monthly: 40.0,
+            currency: "CNY".into(),
+            allocate: false,
+            from: Some("2026-01".into()),
+        };
+        let inv =
+            build_with_subscriptions("ACME", &[jan, feb], &[], 0.0, false, None, &[fee]).unwrap();
+        assert!((inv.total - 80.0).abs() < 1e-9);
+        assert_eq!(inv.subscriptions[0].months, 2);
     }
 
     #[test]

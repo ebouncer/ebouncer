@@ -283,6 +283,7 @@ pub fn verify_bytes(bytes: &[u8]) -> Result<VerifyReport, String> {
             monthly: s.monthly,
             currency: s.currency.clone(),
             allocate: s.allocate,
+            from: s.from.clone(),
         })
         .collect();
     let redo = bill::build_with_subscriptions(

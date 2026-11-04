@@ -5,7 +5,7 @@
 ## [Unreleased]
 
 ### 新增
-- **订阅月费账单**：`subscription` 模式的 provider 默认月费直通；`--allocate` 按该 provider 的 token 占比分摊（含其他客户）。订阅快照写入 `invoice.subscriptions`，证据包可复算。
+- **订阅月费账单**：按自然月计（月费 × 有该 provider 用量的月份数）；默认月费直通，`--allocate` 按该 provider 的月内 token 占比分摊（含其他客户）。订阅快照写入 `invoice.subscriptions`，证据包可复算。
 - **MiniMax 按量费率**：M3.1-Flash / M3 / `minimax` 别名（CNY）；只有 `ebc plan set minimax --mode payg` 才启用，订阅/unknown 不套 token 单价。
 - **计费模式识别（`ebc plan`）**：`show` / `detect` / `set` / `forget`；自动探测 MiniMax（订阅 vs 按量）、DeepSeek（按量+余额）、OpenRouter、Anthropic、OpenAI、自定义端点。Key 只在内存使用，结果缓存、不落盘 Key；识别失败为 `unknown`，只记量、金额 0，不猜价。
 - **安装体验**：Windows 原生 `install.ps1`（用户态、sha256 校验、自动写用户 PATH）；Linux `install.sh` 自动把 `~/.local/bin` 写进 shell rc；新增 [INSTALL.md](INSTALL.md)（Linux/Windows 安装、开票、升级/卸载、排错）。

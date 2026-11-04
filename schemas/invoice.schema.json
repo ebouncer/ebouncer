@@ -46,14 +46,16 @@
       "description": "订阅月费快照（provider/monthly/currency/allocate/tokens/amount）；旧账单缺省为空",
       "items": {
         "type": "object",
-        "required": ["provider", "monthly", "currency", "allocate", "tokens", "amount"],
+        "required": ["provider", "monthly", "currency", "allocate", "months", "tokens", "amount"],
         "properties": {
           "provider": { "type": "string" },
           "monthly": { "type": "number", "minimum": 0 },
           "currency": { "type": "string", "enum": ["CNY", "USD"] },
           "allocate": { "type": "boolean" },
+          "months": { "type": "integer", "minimum": 1 },
           "tokens": { "type": "number", "minimum": 0 },
-          "amount": { "type": "number", "minimum": 0 }
+          "amount": { "type": "number", "minimum": 0 },
+          "from": { "type": ["string", "null"], "description": "生效月份 YYYY-MM" }
         }
       }
     },

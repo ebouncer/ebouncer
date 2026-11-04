@@ -306,6 +306,7 @@ fn subscription_fees(dir: &Path, allocate: bool) -> Vec<bill::SubscriptionFee> {
                 monthly,
                 currency: e.currency.clone().unwrap_or_else(|| "CNY".into()),
                 allocate,
+                from: e.from.clone(),
             })
         })
         .collect()
