@@ -34,6 +34,7 @@ ebc
 ```bash
 cd 你的某个项目目录
 ebc tag 测试甲方        # 挂客户名；存量账目自动重新归因
+# 或在任意目录：ebc tag 测试甲方 --dir /path/to/project
 ebc bill                # 不带参数：列出可开票对象 + 下一行可复制命令
 ebc bill --client 测试甲方 --pdf
 ```

@@ -23,8 +23,8 @@ irm https://raw.githubusercontent.com/ebouncer/ebouncer/main/install.ps1 | iex
 **三步开票**
 
 ```bash
-ebc                              # 1) 自动记账 + 近 30 天花费
-cd 项目目录 && ebc tag 客户名     # 2) 归因（已归因可跳过）
+ebc                              # 1) 自动记账 + 近 30 天花费（任何目录）
+cd 项目目录 && ebc tag 客户名     # 2) 归因（已归因可跳过；也可 --dir 指定）
 ebc bill --client "客户名" --pdf  # 3) 出成本账单 PDF
 ```
 
@@ -35,6 +35,7 @@ ebc bill --client "客户名" --pdf --bundle
 ```
 
 - `ebc bill` 无参数 = 列出可开票客户
+- 归因不必进项目：`ebc tag 客户名 --dir /path/to/project`
 - 成本核算**不加** `--markup`；`--markup 0.2` 是报价单（含服务费）
 - 默认无水印；`--watermark` 只用于演示/截图
 - 更多命令见 [INSTALL.md](INSTALL.md)，上手清单见 [BETA.md](BETA.md)

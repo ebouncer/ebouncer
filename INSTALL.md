@@ -62,6 +62,9 @@ ebc
 cd 你的项目目录
 ebc tag 测试甲方          # 把该项目归因到客户（存量账目一起改）
 
+# 不想 cd 也行：
+ebc tag 测试甲方 --dir /path/to/project
+
 ebc bill                  # 列出可开票客户
 ebc bill --client "测试甲方" --pdf            # 出 PDF（成本口径）
 ebc bill --client "测试甲方" --pdf --bundle   # PDF + 可验证证据包
