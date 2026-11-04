@@ -4,9 +4,12 @@
 
 | 渠道 | 触发 | install.sh |
 |---|---|---|
-| 稳定版 `vX.Y.Z` | 手动打 tag | 默认（`EBC_CHANNEL=stable`） |
-| 预发布 `vX.Y.Z-rc.N` | 手动打 tag | `EBC_CHANNEL=rc`；无稳定版时自动回退到 rc |
+| 稳定版 `vX.Y.Z` | 手动打 tag | `EBC_CHANNEL=stable` |
+| 预发布 `vX.Y.Z-rc.N` | 手动打 tag | 默认 `auto`（取最新一条，含 rc）；`EBC_CHANNEL=rc` 同义 |
 | 固定版本 | — | `EBC_VERSION=vX.Y.Z` |
+
+> `auto` 是默认值：v0.1.0 正式发布前没有稳定版，必须能装到 rc，否则会拿到旧的 rc.2。
+> 打正式版 tag 后，最新一条就是稳定版，`auto` 自然切过去。
 
 版本语义：`0.x` 期间允许破坏性变更；账本/发票 schema 有版本号，读旧数据必须兼容。
 

@@ -2,7 +2,7 @@
 # eBouncer 安装脚本 —— 纯用户态：不碰 root、不替换 shell、只写 ~/.local/bin 与 ~/.ebouncer
 # 用法：curl -fsSL https://ebouncer.dev/install.sh | sh
 #      EBC_VERSION=v0.1.0 curl ... | sh   # 固定版本
-#      EBC_CHANNEL=rc curl ... | sh       # 装最新预发布（默认 stable，只取稳定版）
+#      EBC_CHANNEL=rc curl ... | sh       # 最新预发布（auto 已含 rc；stable 只取稳定版）
 set -eu
 
 REPO="ebouncer/ebouncer"
@@ -24,17 +24,17 @@ esac
 fetch_tag() { curl -fsSL "$1" | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4; }
 
 if [ -z "${EBC_VERSION:-}" ]; then
-  if [ "${EBC_CHANNEL:-stable}" = "rc" ]; then
-    # 预发布渠道：/releases 列表含 rc，取最新一条
-    EBC_VERSION=$(fetch_tag "https://api.github.com/repos/$REPO/releases?per_page=10") || true
-  else
-    # 稳定渠道：/releases/latest 不含 prerelease
-    EBC_VERSION=$(fetch_tag "https://api.github.com/repos/$REPO/releases/latest") || true
-    if [ -z "${EBC_VERSION:-}" ]; then
-      echo "尚无稳定版发布，回退到最新预发布（EBC_CHANNEL=stable 可强制稳定渠道）" >&2
+  case "${EBC_CHANNEL:-auto}" in
+    stable)
+      # 只取稳定版（GitHub 的 latest 不含 prerelease）
+      EBC_VERSION=$(fetch_tag "https://api.github.com/repos/$REPO/releases/latest") || true
+      ;;
+    *)
+      # auto / rc：取最新一条 release（含预发布）。
+      # v0.1.0 正式发布前没有稳定版，默认必须能装到 rc，否则会拿到旧版。
       EBC_VERSION=$(fetch_tag "https://api.github.com/repos/$REPO/releases?per_page=10") || true
-    fi
-  fi
+      ;;
+  esac
 fi
 [ -n "${EBC_VERSION:-}" ] || { echo "无法解析最新版本号，请设 EBC_VERSION（如 v0.1.0）" >&2; exit 1; }
 
