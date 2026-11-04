@@ -7,6 +7,7 @@
 - [x] 命令防火墙 dry-run（shell 级）：`ebc init` 注入交互式 shell 钩子，命中规则落审计链（落盘前脱敏）+ 尾部 checkpoint（截断可发现）
 - [x] 费率表按事件时间选生效版本（厂商调价，历史账本零迁移）
 - [x] 一行安装 + CI/发布流水线（Linux musl 静态 / Windows，install-smoke 端到端）
+- [ ] 低门槛开票（F0，Batch 1.5）：`ebc projects` / `tag --project` / `bill` 交互 / quickstart-smoke
 
 ## v0.2 —— 误报校准与恢复能力
 - [x] 可携带证据包 + 离线校验：`ebc bundle` / `ebc verify-bundle`（2026-11 提前完成）
