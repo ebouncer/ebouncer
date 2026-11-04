@@ -4,9 +4,10 @@
 /// 出厂危险命令基线（YAML 原文，规则加载器与 `ebc rules --dump` 共用）
 pub const DANGEROUS_CMDS: &str = include_str!("../dangerous-cmds.v0.1.yaml");
 
-/// 出厂费率表条目（deepseek 按次价格已核验；token 单价为占位，启用前须复核定价页）
+/// 出厂费率表条目（token 单价均按官方定价页核验日期标注在文件头）
 pub mod rates {
     pub const DEEPSEEK: &str = include_str!("../rates/deepseek.yaml");
+    pub const ANTHROPIC: &str = include_str!("../rates/anthropic.yaml");
 }
 
 #[cfg(test)]

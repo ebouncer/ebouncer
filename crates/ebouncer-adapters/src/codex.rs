@@ -68,7 +68,7 @@ impl Adapter for CodexAdapter {
                     .unwrap_or_default(),
                 cache_write: 0,
                 cost_native: 0.0,
-                currency: "CNY".into(),
+                currency: "USD".into(),
                 requests_search: 0,
                 requests_fetch: 0,
             });

@@ -18,7 +18,7 @@ use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
-#[command(name = "ebc", version, about = "eBouncer —— OS-level bouncer for AI coding agents")]
+#[command(name = "ebc", version, about = "eBouncer —— 跨工具 AI 花费账本与审计证据层")]
 struct Cli {
     #[command(subcommand)]
     cmd: Option<Cmd>,
@@ -171,7 +171,10 @@ fn load_rates(data_dir: &Path) -> Vec<rates::VendorRates> {
     if !t.is_empty() {
         return t;
     }
-    rates::parse_yaml(ebouncer_rules::rates::DEEPSEEK)
+    // 出厂表：DeepSeek（CNY）+ Anthropic（USD）。用户自建 rates/ 时完全接管。
+    let mut v = rates::parse_yaml(ebouncer_rules::rates::DEEPSEEK);
+    v.extend(rates::parse_yaml(ebouncer_rules::rates::ANTHROPIC));
+    v
 }
 
 fn collect_logs(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -246,6 +249,16 @@ fn do_ingest(
     n
 }
 
+/// 金额展示：按费率表币种加符号；未知币种只显示数字。
+fn money(currency: &str, amount: f64) -> String {
+    let sym = match currency {
+        "CNY" => "¥",
+        "USD" => "$",
+        _ => "",
+    };
+    format!("{sym}{amount:.2}")
+}
+
 /// 窗口内一组 (tool, project, client, model) 的数量合计与金额。
 #[derive(Default)]
 struct LedgerRow {
@@ -255,6 +268,10 @@ struct LedgerRow {
     requests_search: u64,
     requests_fetch: u64,
     cost: f64,
+    /// 该行命中的费率币种（无价行用事件自带 currency 兜底）
+    currency: Option<String>,
+    /// 同一行出现多个币种（正常不会，防御性展示）
+    mixed: bool,
 }
 
 /// 按 (tool, project, client, model) 聚合窗口内事件。
@@ -276,7 +293,13 @@ fn aggregate_window(
             e.client.clone().unwrap_or_else(|| "-".to_string()),
             e.model.clone().unwrap_or_else(|| "-".to_string()),
         );
+        let cur = rates::event_currency(e, table).unwrap_or_else(|| e.currency.clone());
         let row = agg.entry(key).or_default();
+        match &row.currency {
+            None => row.currency = Some(cur),
+            Some(c) if *c == cur => {}
+            Some(_) => row.mixed = true,
+        }
         row.tokens_in += e.tokens_in;
         row.tokens_out += e.tokens_out;
         row.cache_read += e.cache_read;
@@ -299,20 +322,26 @@ fn print_ledger(dir: &Path, days: i64) -> bool {
     let agg = aggregate_window(&evs, &table, &cutoff);
     println!("近 {days} 天花费汇总（工具 × 项目 × 客户 × 模型）");
     println!(
-        "{:<13} {:<16} {:<16} {:<18} {:>10} {:>9} {:>9} {:>7} {:>6} {:>8}",
-        "tool", "project", "client", "model", "tok_in", "tok_out", "cache_rd", "search*", "fetch*", "≈¥"
+        "{:<13} {:<16} {:<16} {:<18} {:>10} {:>9} {:>9} {:>7} {:>6} {:>9}",
+        "tool", "project", "client", "model", "tok_in", "tok_out", "cache_rd", "search*", "fetch*", "≈花费"
     );
-    let mut top: Vec<(f64, (String, String, String, String))> = Vec::new();
+    let mut top: Vec<(f64, (String, String, String, String), String, bool)> = Vec::new();
     for (k, a) in &agg {
-        top.push((a.cost, k.clone()));
+        top.push((a.cost, k.clone(), a.currency.clone().unwrap_or_else(|| "-".into()), a.mixed));
+        let amount = if a.mixed {
+            "混合".to_string()
+        } else {
+            money(a.currency.as_deref().unwrap_or("-"), a.cost)
+        };
         println!(
-            "{:<13} {:<16} {:<16} {:<18} {:>10} {:>9} {:>9} {:>7} {:>6} {:>8.2}",
-            k.0, k.1, k.2, k.3, a.tokens_in, a.tokens_out, a.cache_read, a.requests_search, a.requests_fetch, a.cost
+            "{:<13} {:<16} {:<16} {:<18} {:>10} {:>9} {:>9} {:>7} {:>6} {:>9}",
+            k.0, k.1, k.2, k.3, a.tokens_in, a.tokens_out, a.cache_read, a.requests_search, a.requests_fetch, amount
         );
     }
     top.sort_by(|a, b| b.0.total_cmp(&a.0));
-    if let Some((c, k)) = top.first() {
-        println!("\n花费最大：{} / {}（客户 {}，模型 {}），≈¥{:.2}", k.0, k.1, k.2, k.3, c);
+    if let Some((c, k, cur, mixed)) = top.first() {
+        let amount = if *mixed { "混合".to_string() } else { money(cur, *c) };
+        println!("\n花费最大：{} / {}（客户 {}，模型 {}），≈{}", k.0, k.1, k.2, k.3, amount);
     }
     if bad > 0 {
         eprintln!("（跳过了 {bad} 行无法解析的记录）");
@@ -407,27 +436,53 @@ fn cmd_bill_clients(dir: &Path, days: i64) -> i32 {
     let (evs, bad) = ledger::read_all(&dir.join("ledger.jsonl")).unwrap_or_else(|_| (Vec::new(), 0));
     let cutoff = (Utc::now() - Duration::days(days)).to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
     let table = load_rates(dir);
-    // 与 print_ledger 同源：逐事件按各自时间选费率版本，再按客户累加。
-    let mut by_client: BTreeMap<String, f64> = Default::default();
-    for e in evs.iter().filter(|e| e.ts >= cutoff) {
-        let client = e.client.clone().unwrap_or_else(|| "(未归因)".to_string());
-        *by_client.entry(client).or_insert(0.0) += rates::estimate(e, &table);
-    }
+    let window: Vec<ledger::LedgerEvent> = evs
+        .into_iter()
+        .filter(|e| e.ts >= cutoff && ts_is_valid(&e.ts))
+        .collect();
     if bad > 0 {
         eprintln!("（跳过了 {bad} 行无法解析的记录）");
     }
-    if by_client.is_empty() {
+    if window.is_empty() {
+        println!("近 {days} 天无账目。先跑 ebc ingest");
+        return 0;
+    }
+    let mut clients: BTreeMap<String, ()> = Default::default();
+    let mut unattributed = 0usize;
+    for e in &window {
+        match &e.client {
+            Some(c) => {
+                clients.insert(c.clone(), ());
+            }
+            None => unattributed += 1,
+        }
+    }
+    // 每个客户走同一条 bill::build：币种/金额都与真正出账一致（含单币种校验）。
+    let mut rows: Vec<(String, String, f64)> = Vec::new();
+    let mut mixed: Vec<String> = Vec::new();
+    for c in clients.keys() {
+        match ebouncer_core::bill::build(c, &window, &table, 0.0, true, None) {
+            Ok(inv) => rows.push((c.clone(), inv.currency, inv.total)),
+            Err(_) => mixed.push(c.clone()),
+        }
+    }
+    rows.sort_by(|a, b| b.2.total_cmp(&a.2));
+    if rows.is_empty() && mixed.is_empty() && unattributed == 0 {
         println!("近 {days} 天无账目。先跑 ebc ingest");
         return 0;
     }
     println!("近 {days} 天可开票对象：");
-    let mut rows: Vec<(String, f64)> = by_client.iter().map(|(k, v)| (k.clone(), *v)).collect();
-    rows.sort_by(|a, b| b.1.total_cmp(&a.1));
-    for (c, v) in &rows {
-        println!("  {:<24} ≈¥{:.2}", c, v);
+    for (c, cur, v) in &rows {
+        println!("  {:<24} {}", c, money(cur, *v));
     }
-    if let Some((top, _)) = rows.first() {
-        println!("\n下一步：ebc bill --client \"{top}\" --format pdf --out");
+    for c in &mixed {
+        println!("  {:<24} ⚠ 跨币种（v0.1 不支持混币账单，请按币种拆客户）", c);
+    }
+    if unattributed > 0 {
+        println!("\n另有 {unattributed} 条事件未归因——先在该项目目录跑：ebc tag 客户名");
+    }
+    if let Some((top, cur, _)) = rows.first() {
+        println!("\n下一步：ebc bill --client \"{top}\" --format pdf --out（币种 {cur}）");
     }
     0
 }
@@ -476,20 +531,22 @@ fn run(cmd: Cmd) -> i32 {
             println!("演示账本（内存中，不写入任何文件）：\n");
             let table = load_rates(&dir);
             println!(
-                "{:<13} {:<16} {:<16} {:<18} {:>10} {:>9} {:>7} {:>6} {:>8}",
-                "tool", "project", "client", "model", "tok_in", "tok_out", "search*", "fetch*", "≈¥"
+                "{:<13} {:<16} {:<16} {:<18} {:>10} {:>9} {:>7} {:>6} {:>9}",
+                "tool", "project", "client", "model", "tok_in", "tok_out", "search*", "fetch*", "≈花费"
             );
             for e in &samples {
                 let est = rates::estimate(e, &table);
+                let cur = rates::event_currency(e, &table).unwrap_or_else(|| e.currency.clone());
                 println!(
-                    "{:<13} {:<16} {:<16} {:<18} {:>10} {:>9} {:>7} {:>6} {:>8.2}",
+                    "{:<13} {:<16} {:<16} {:<18} {:>10} {:>9} {:>7} {:>6} {:>9}",
                     e.tool, e.project,
                     e.client.clone().unwrap_or_else(|| "-".into()),
                     e.model.clone().unwrap_or_else(|| "-".into()),
-                    e.tokens_in, e.tokens_out, e.requests_search, e.requests_fetch, est
+                    e.tokens_in, e.tokens_out, e.requests_search, e.requests_fetch,
+                    money(&cur, est)
                 );
             }
-            println!("\n（claude 行 ¥0 属预期：未配置该模型费率时只记量不算价，绝不编价）");
+            println!("\n（claude 行按 Anthropic 官方价以 USD 计；DeepSeek 行按 CNY 计。v0.1 不做跨币种合计）");
             println!("真实数据：ebc ingest → ebc ledger");
             0
         }
@@ -578,7 +635,10 @@ fn run(cmd: Cmd) -> i32 {
             }
 
             let basis = ledger::file_sha256(&path).ok();
-            let inv = ebouncer_core::bill::build(&client, &evs, &table, markup, watermark, basis);
+            let inv = match ebouncer_core::bill::build(&client, &evs, &table, markup, watermark, basis) {
+                Ok(inv) => inv,
+                Err(e) => { eprintln!("{e}"); return 1; }
+            };
             if inv.items.is_empty() {
                 let known: Vec<String> = {
                     let mut s: Vec<String> = evs.iter().filter_map(|e| e.client.clone()).collect::<Vec<_>>();
@@ -601,8 +661,8 @@ fn run(cmd: Cmd) -> i32 {
                 BillFmt::Json => println!("{}", inv.to_json()),
                 BillFmt::Csv => println!("{}", inv.to_csv()),
                 BillFmt::Table | BillFmt::Pdf => {
-                    println!("客户 {} · 周期 {} ~ {} · 加成 {:.0}% · 水印 {}",
-                        inv.client, inv.period.from, inv.period.to, inv.markup * 100.0,
+                    println!("客户 {} · 周期 {} ~ {} · 币种 {} · 加成 {:.0}% · 水印 {}",
+                        inv.client, inv.period.from, inv.period.to, inv.currency, inv.markup * 100.0,
                         if inv.watermark { "是" } else { "否（试用）" });
                     println!("{:<13} {:<15} {:>12} {:>12} {:>12}", "tool", "category", "qty", "unit", "amount");
                     for i in &inv.items {
@@ -610,8 +670,8 @@ fn run(cmd: Cmd) -> i32 {
                     }
                     let basis = inv.data_basis.as_deref().unwrap_or("-");
                     println!(
-                        "合计（含加成）：¥{:.2} · 估算未含税 · 账本指纹 {} · 费率表指纹 {}",
-                        inv.total,
+                        "合计（含加成）：{} · 估算未含税 · 账本指纹 {} · 费率表指纹 {}",
+                        money(&inv.currency, inv.total),
                         &basis[..basis.len().min(12)],
                         &inv.rates_fingerprint[..inv.rates_fingerprint.len().min(12)]
                     );
@@ -773,7 +833,8 @@ fn demo_ev(
         cache_read: 0,
         cache_write: 0,
         cost_native: 0.0,
-        currency: "CNY".to_string(),
+        // 演示事件也按宿主真实币种：Claude Code 走 USD，其余 CNY
+        currency: if tool == "claude-code" { "USD" } else { "CNY" }.to_string(),
         requests_search: sr,
         requests_fetch: sf,
     }

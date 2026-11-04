@@ -1,8 +1,9 @@
 # 路线图
 
 ## v0.1（当前，2026-11）—— 记账与开票闭环
-- [x] 跨工具账本：DSH（真实日志验证）/ Claude Code / Codex（契约源码级核验）
+- [x] 跨工具账本：DSH（真实日志验证）/ Claude Code / Codex（适配器就绪，契约待真实样本回归）
 - [x] 客户归因与账单：`ebc tag` / `ebc bill`（table/csv/json/pdf，markup，3 张无水印试用）
+- [x] 单币种计价：DeepSeek（CNY）+ Anthropic（USD），混币客户明确拒绝；多币种汇率层随后
 - [x] 命令防火墙 dry-run（shell 级）：`ebc init` 注入交互式 shell 钩子，命中规则落审计链（落盘前脱敏）+ 尾部 checkpoint（截断可发现）
 - [x] 费率表按事件时间选生效版本（厂商调价，历史账本零迁移）
 - [x] 一行安装 + CI/发布流水线（Linux musl 静态 / Windows，install-smoke 端到端）
@@ -13,6 +14,7 @@
 - [ ] 误报率数据驱动的规则库校准（beta 反馈 → 每周规则快照）
 - [ ] Shadow Vault：agent 删不掉的影子快照 + `ebc restore`（变更前自动留版本）
 - [x] 高峰/空闲时段化计价（2026-11 提前于 v0.1 完成，按事件本地时间取价档）；更多厂商费率表
+- [ ] 多币种汇率快照：混币客户账单（USD/CNY 换算，汇率可追溯）
 - [ ] `ebc rates check`：定价页变化监测与提醒
 - [ ] `ebc rules explain <id>`：命中解释与规则样例
 

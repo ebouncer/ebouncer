@@ -2,7 +2,17 @@
 
 > 跨工具的 AI 花费账本与审计证据层。 —— 你雇了三个 AI 代理，得有一本共同的账。
 
-**状态：v0.1 早期开发（dry-run 阶段）。** 当前能力：跨工具 AI 花费账本（ledger）、按客户归因出账（bill）、危险命令 dry-run 观察（仅交互式 shell）。宿主原生 hook 适配、内核探针、Shadow Vault 恢复在路线图上（见 ROADMAP）。
+**状态：v0.1 早期开发（dry-run 阶段）。** 当前能力：跨工具 AI 花费账本（ledger）、按客户归因出账（bill）、危险命令 dry-run 观察（仅交互式 shell）。计价覆盖 DeepSeek（CNY）与 Anthropic（USD）的单币种账单；混币客户暂不支持。宿主原生 hook 适配、内核探针、Shadow Vault 恢复在路线图上（见 ROADMAP）。
+
+## 支持矩阵（v0.1）
+
+| 宿主 | 记账 | 计价 | 备注 |
+|---|---|---|---|
+| DSH | ✅ 真实日志验证 | DeepSeek（CNY） | 高峰/空闲、Search/Fetch 按次 |
+| Claude Code | ⚠️ 适配器就绪，待真实样本回归 | Anthropic（USD） | 缓存写入按 5 分钟 TTL 价 |
+| Codex | ⚠️ 适配器就绪，待真实样本回归 | 暂无 OpenAI 费率（只记量） | 事件币种 USD |
+
+空模型/未知模型：只记量与 0 元行，绝不编价。同一客户跨币种时 `ebc bill` 会明确拒绝（汇率层未做）。
 
 ## 为什么（Why now）
 
@@ -29,7 +39,7 @@ ebc init --yes          # 危险命令观察钩子（dry-run：提示+审计，�
 ebc doctor              # 环境体检
 ```
 
-完整上手见 [BETA.md](BETA.md)，能力边界见 [ROADMAP.md](ROADMAP.md)。
+完整上手见 [BETA.md](BETA.md)，能力边界见 [ROADMAP.md](ROADMAP.md)，发版流程见 [RELEASING.md](RELEASING.md)。
 
 ## 数据都在你自己的机器上
 

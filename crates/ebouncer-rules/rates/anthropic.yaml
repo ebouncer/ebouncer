@@ -1,0 +1,59 @@
+# 费率：anthropic（美元计价）
+# 核验日期：2026-11-04。官方定价页为动态渲染，本次按 platform.claude.com/docs/en/about-claude/pricing
+# 的 rate card 核对，并与 nOps 2026-10-19 汇总表交叉验证（模型 ID 用 Claude Code 实际返回的写法）。
+# 缓存写入取【5 分钟 TTL】单价；日志不区分 5m/1h，若实际用 1h TTL 会略低估。
+# 不设时段价：Anthropic 无高峰/空闲档；Batch 五折、长上下文溢价日志里不可见，暂不建模。
+vendor: anthropic
+currency: USD
+effective_from: "2026-11-01"
+models:
+  - name: claude-fable-5-1      # 旗舰
+    input_per_mtok: 10.0
+    output_per_mtok: 50.0
+    cache_read_per_mtok: 0.25
+    cache_write_per_mtok: 12.5
+  - name: claude-opus-5-5
+    input_per_mtok: 4.0
+    output_per_mtok: 20.0
+    cache_read_per_mtok: 0.20
+    cache_write_per_mtok: 5.0
+  - name: claude-sonnet-5-5
+    input_per_mtok: 2.0
+    output_per_mtok: 10.0
+    cache_read_per_mtok: 0.10
+    cache_write_per_mtok: 2.5
+  - name: claude-haiku-5-5
+    input_per_mtok: 0.10
+    output_per_mtok: 0.50
+    cache_read_per_mtok: 0.01
+    cache_write_per_mtok: 0.125
+  - name: claude-fable-5
+    input_per_mtok: 10.0
+    output_per_mtok: 50.0
+    cache_read_per_mtok: 1.0
+    cache_write_per_mtok: 12.5
+  - name: claude-opus-5
+    input_per_mtok: 5.0
+    output_per_mtok: 25.0
+    cache_read_per_mtok: 0.50
+    cache_write_per_mtok: 6.25
+  - name: claude-sonnet-5
+    input_per_mtok: 2.0
+    output_per_mtok: 10.0
+    cache_read_per_mtok: 0.20
+    cache_write_per_mtok: 2.5
+  - name: claude-sonnet-4-6
+    input_per_mtok: 3.0
+    output_per_mtok: 15.0
+    cache_read_per_mtok: 0.30
+    cache_write_per_mtok: 3.75
+  - name: claude-sonnet-4-5
+    input_per_mtok: 3.0
+    output_per_mtok: 15.0
+    cache_read_per_mtok: 0.30
+    cache_write_per_mtok: 3.75
+  - name: claude-haiku-4-5
+    input_per_mtok: 1.0
+    output_per_mtok: 5.0
+    cache_read_per_mtok: 0.10
+    cache_write_per_mtok: 1.25

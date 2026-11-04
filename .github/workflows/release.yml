@@ -49,6 +49,8 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+          # rc/预发布标签自动标记 prerelease：install.sh 的 stable 渠道不会装到它
+          prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
             安装：`curl -fsSL https://raw.githubusercontent.com/ebouncer/ebouncer/main/install.sh | sh`
             产物经 sha256sums 校验（checksums.txt）。cosign/SLSA 签名在 v0.3 引入。

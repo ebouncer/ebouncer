@@ -132,7 +132,28 @@ impl Price<'_> {
 }
 
 fn model_matches(model: &str, mr: &ModelRate) -> bool {
-    model == mr.name || model.ends_with(&mr.name)
+    model == mr.name || model.ends_with(&mr.name) || model.starts_with(&mr.name)
+}
+
+/// 同一版本内多个模型名都能匹配时（如 `claude-opus-5` 与 `claude-opus-5-5`），
+/// 取最长的那个，避免 "claude-opus-5-5" 被 "claude-opus-5" 抢先匹配。
+fn best_model<'a>(entry: &'a VendorRates, model: &str) -> Option<&'a ModelRate> {
+    entry
+        .models
+        .iter()
+        .filter(|mr| model_matches(model, mr))
+        .max_by_key(|mr| mr.name.len())
+}
+
+/// 事件实际适用的币种：命中费率条目的 currency。找不到价格时返回 None
+///（调用方可用事件自带的 currency 兜底）。
+pub fn event_currency(ev: &LedgerEvent, table: &[VendorRates]) -> Option<String> {
+    match &ev.model {
+        Some(model) => price_at(model, &ev.ts, table).map(|p| p.entry.currency.clone()),
+        None => tool_entry_at(&ev.ts, table)
+            .filter(|v| v.tool_requests.is_some())
+            .map(|v| v.currency.clone()),
+    }
 }
 
 /// 解析版本/事件时间：RFC3339 与纯日期（YYYY-MM-DD，按 UTC 00:00）都支持。
@@ -238,7 +259,7 @@ fn tier_at(tt: &TimeTiers, ev_ts: &str) -> Tier {
 /// estimate() 与账单分项计价共用这一入口，保证两处口径一致。
 pub fn price_at<'a>(model: &str, ev_ts: &str, table: &'a [VendorRates]) -> Option<Price<'a>> {
     let entry = best_entry(table, model, ev_ts)?;
-    let model_rate = entry.models.iter().find(|mr| model_matches(model, mr))?;
+    let model_rate = best_model(entry, model)?;
     let (tier, multiplier) = match &entry.time_tiers {
         None => (Tier::Flat, 1.0),
         Some(tt) => {
@@ -539,5 +560,27 @@ mod tests {
         let s = p.source();
         assert!(s.contains("deepseek@2026-09-01"), "{s}");
         assert!(s.contains("高峰"), "{s}");
+    }
+
+    /// 回归（2026-11-05）：Anthropic 的模型 ID 带日期后缀（claude-opus-5-5-20260101），
+    /// 且同族有 opus-5 与 opus-5-5 两个条目——必须匹配到更长的那个。
+    #[test]
+    fn matches_versioned_ids_and_prefers_longest_name() {
+        let table = vec![VendorRates {
+            vendor: "anthropic".into(), currency: "USD".into(),
+            effective_from: "2026-11-01".into(),
+            time_tiers: None,
+            models: vec![
+                ModelRate { name: "claude-opus-5".into(), input_per_mtok: 5.0, output_per_mtok: 25.0, cache_read_per_mtok: 0.5, cache_write_per_mtok: 6.25 },
+                ModelRate { name: "claude-opus-5-5".into(), input_per_mtok: 4.0, output_per_mtok: 20.0, cache_read_per_mtok: 0.2, cache_write_per_mtok: 5.0 },
+            ],
+            tool_requests: None,
+        }];
+        let p = price_at("claude-opus-5-5-20260101", "2026-11-03T00:00:00Z", &table).unwrap();
+        assert_eq!(p.model.name, "claude-opus-5-5");
+        assert!((p.input_per_mtok() - 4.0).abs() < 1e-9);
+        let mut e = ev();
+        e.model = Some("claude-opus-5-5".into());
+        assert_eq!(event_currency(&e, &table).as_deref(), Some("USD"));
     }
 }

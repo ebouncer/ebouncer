@@ -74,6 +74,27 @@ struct Qty {
     requests_fetch: u64,
 }
 
+/// 账单构建失败的原因。v0.1 只支持单币种账单：同一客户跨币种（如 CNY + USD）
+/// 时明确拒绝，不做隐式汇率换算（汇率需要可追溯快照，留给后续版本）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BillError {
+    MixedCurrency(Vec<String>),
+}
+
+impl std::fmt::Display for BillError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BillError::MixedCurrency(list) => write!(
+                f,
+                "该客户的事件跨币种（{}），v0.1 只支持单币种账单；请先在费率表统一币种或按币种拆客户",
+                list.join(" / ")
+            ),
+        }
+    }
+}
+
+impl std::error::Error for BillError {}
+
 /// 解析一条事件的计价锚点与单价（同时返回命中的费率条目，供账单冻结快照）：
 /// - 有模型：走 rates::price_at（版本选择 + 高峰/空闲价档）；
 /// - 无模型（纯 Search/Fetch 按次事件）：走 rates::tool_entry_at 取按次价，价档记为统一价
@@ -140,7 +161,7 @@ pub fn build(
     markup: f64,
     watermark: bool,
     data_basis: Option<String>,
-) -> Invoice {
+) -> Result<Invoice, BillError> {
     let evts: Vec<&LedgerEvent> = events
         .iter()
         .filter(|e| e.client.as_deref() == Some(client))
@@ -163,6 +184,8 @@ pub fn build(
         Default::default();
     // 价格快照：只冻结本单实际命中的条目（vendor+生效版本去重，BTreeMap 保证顺序稳定）
     let mut used_entries: std::collections::BTreeMap<(String, String), VendorRates> = Default::default();
+    // 单币种约束：只由"命中了费率条目"的事件决定；无价模型不参与（金额本来就是 0）
+    let mut currencies: std::collections::BTreeSet<String> = Default::default();
     for e in &evts {
         let model = e.model.clone().unwrap_or_else(|| "-".to_string());
         let resolved = resolve_price(&model, &e.ts, table);
@@ -170,6 +193,7 @@ pub fn build(
             used_entries
                 .entry((entry.vendor.clone(), entry.effective_from.clone()))
                 .or_insert_with(|| (*entry).clone());
+            currencies.insert(entry.currency.clone());
         }
         let key = resolved.as_ref().map(|(_, k, _)| k.clone());
         let units = resolved.as_ref().map(|(_, _, u)| u.clone());
@@ -183,6 +207,14 @@ pub fn build(
         entry.0.requests_search += e.requests_search;
         entry.0.requests_fetch += e.requests_fetch;
     }
+    if currencies.len() > 1 {
+        return Err(BillError::MixedCurrency(currencies.into_iter().collect()));
+    }
+    let currency = currencies
+        .into_iter()
+        .next()
+        .or_else(|| evts.first().map(|e| e.currency.clone()))
+        .unwrap_or_else(|| "CNY".to_string());
     let rates_snapshot: Vec<VendorRates> = used_entries.into_values().collect();
     let rates_fingerprint = crate::rates::snapshot_fingerprint(&rates_snapshot);
 
@@ -249,19 +281,19 @@ pub fn build(
     }
 
     let total = raw_total * (1.0 + markup.max(0.0));
-    Invoice {
+    Ok(Invoice {
         client: client.to_string(),
         period: Period { from, to },
         items,
         markup,
         total,
-        currency: "CNY".to_string(),
+        currency,
         generated_at: chrono::Utc::now().to_rfc3339(),
         data_basis,
         rates_snapshot,
         rates_fingerprint,
         watermark,
-    }
+    })
 }
 
 impl Invoice {
@@ -323,7 +355,7 @@ mod tests {
             ev(Some("ACME"), "deepseek-flash", 1_000_000, 1_000_000, 1_000_000, 1000, 1000),
             ev(None, "deepseek-flash", 999_999_999, 0, 0, 0, 0), // 别的客户不应混入
         ];
-        let inv = build("ACME", &evs, &table(), 0.2, true, None);
+        let inv = build("ACME", &evs, &table(), 0.2, true, None).unwrap();
         assert_eq!(inv.items.len(), 5);
         // 1.0 + 2.0 + 0.1 + 5.0 + 5.0 = 13.1，×1.2 = 15.72
         assert!((inv.total - 15.72).abs() < 1e-6, "total={}", inv.total);
@@ -332,14 +364,14 @@ mod tests {
     #[test]
     fn unpriced_model_lists_zero_amount_without_inventing_price() {
         let evs = vec![ev(Some("X"), "mystery-model", 5000, 100, 0, 0, 0)];
-        let inv = build("X", &evs, &table(), 0.0, true, None);
+        let inv = build("X", &evs, &table(), 0.0, true, None).unwrap();
         assert!(inv.items.iter().all(|i| i.amount == 0.0));
         assert!(inv.items.iter().any(|i| i.note.as_deref().is_some()));
     }
     #[test]
     fn csv_has_basis_header() {
         let evs = vec![ev(Some("ACME"), "deepseek-flash", 1_000_000, 0, 0, 0, 0)];
-        let csv = build("ACME", &evs, &table(), 0.0, true, None).to_csv();
+        let csv = build("ACME", &evs, &table(), 0.0, true, None).unwrap().to_csv();
         assert!(csv.starts_with("# 客户: ACME"));
         assert!(csv.contains("口径:"));
         assert!(csv.contains("费率表指纹:"), "{csv}");
@@ -371,7 +403,7 @@ mod tests {
         let mut idle = ev(Some("ACME"), "cached-model", 0, 0, 0, 0, 0);
         idle.ts = "2026-11-03T15:00:00Z".into(); // 周二 23:00 北京 → 空闲半价
         idle.cache_write = 1_000_000;
-        let inv = build("ACME", &[peak, idle], &table, 0.0, true, None);
+        let inv = build("ACME", &[peak, idle], &table, 0.0, true, None).unwrap();
         assert_eq!(inv.items.len(), 2, "{:?}", inv.items);
         assert!(inv.items.iter().all(|i| i.category == "cache_write"));
         assert!((inv.total - (3.75 + 1.875)).abs() < 1e-9, "total={}", inv.total);
@@ -384,7 +416,7 @@ mod tests {
     fn zero_priced_cache_write_row_is_explained() {
         let mut e = ev(Some("ACME"), "deepseek-flash", 0, 0, 0, 0, 0);
         e.cache_write = 500_000;
-        let inv = build("ACME", &[e], &table(), 0.0, true, None);
+        let inv = build("ACME", &[e], &table(), 0.0, true, None).unwrap();
         let row = inv
             .items
             .iter()
@@ -413,20 +445,20 @@ mod tests {
         let mut e = ev(Some("ACME"), "deepseek-flash", 1_000_000, 0, 0, 0, 0);
         e.ts = "2026-11-03T00:00:00Z".into();
 
-        let inv = build("ACME", std::slice::from_ref(&e), &[v1.clone(), v2.clone()], 0.0, true, None);
+        let inv = build("ACME", std::slice::from_ref(&e), &[v1.clone(), v2.clone()], 0.0, true, None).unwrap();
         assert_eq!(inv.rates_snapshot.len(), 1, "只应冻结命中的版本");
         assert_eq!(inv.rates_snapshot[0].effective_from, "2026-11-01");
         assert_eq!(inv.rates_fingerprint.len(), 64);
         assert!(inv.rates_fingerprint.chars().all(|c| c.is_ascii_hexdigit()));
 
         // 费率表顺序变化不影响快照指纹（可复现）
-        let rev = build("ACME", std::slice::from_ref(&e), &[v2.clone(), v1.clone()], 0.0, true, None);
+        let rev = build("ACME", std::slice::from_ref(&e), &[v2.clone(), v1.clone()], 0.0, true, None).unwrap();
         assert_eq!(rev.rates_fingerprint, inv.rates_fingerprint);
 
         // 用到的单价变化 → 指纹必须变化
         let mut v2b = v2;
         v2b.models[0].input_per_mtok = 3.0;
-        let changed = build("ACME", std::slice::from_ref(&e), &[v1, v2b], 0.0, true, None);
+        let changed = build("ACME", std::slice::from_ref(&e), &[v1, v2b], 0.0, true, None).unwrap();
         assert_ne!(changed.rates_fingerprint, inv.rates_fingerprint);
     }
 
@@ -438,7 +470,7 @@ mod tests {
         e.model = None;
         let evs = vec![e];
         let t = table();
-        let inv = build("ACME", &evs, &t, 0.0, true, None);
+        let inv = build("ACME", &evs, &t, 0.0, true, None).unwrap();
         assert_eq!(inv.items.len(), 2, "{:?}", inv.items);
         assert!((inv.total - 7.5).abs() < 1e-9, "total={}", inv.total);
         assert!(inv.items.iter().all(|i| i.amount > 0.0));
@@ -477,7 +509,7 @@ mod tests {
         old.ts = "2026-10-15T00:00:00Z".into();
         let mut new = ev(Some("ACME"), "deepseek-flash", 1_000_000, 0, 0, 0, 0);
         new.ts = "2026-11-03T00:00:00Z".into();
-        let inv = build("ACME", &[old, new], &table, 0.0, true, None);
+        let inv = build("ACME", &[old, new], &table, 0.0, true, None).unwrap();
         assert_eq!(inv.items.len(), 2, "跨版本应拆成两行");
         assert!((inv.total - 3.0).abs() < 1e-9, "total={}", inv.total);
         let sources: Vec<&str> = inv.items.iter().map(|i| i.price_source.as_str()).collect();
@@ -506,10 +538,52 @@ mod tests {
         peak.ts = "2026-11-03T02:00:00Z".into(); // 周二 10:00 北京 → 高峰
         let mut idle = ev(Some("ACME"), "deepseek-flash", 1_000_000, 0, 0, 0, 0);
         idle.ts = "2026-11-03T15:00:00Z".into(); // 周二 23:00 北京 → 空闲
-        let inv = build("ACME", &[peak, idle], &table, 0.0, true, None);
+        let inv = build("ACME", &[peak, idle], &table, 0.0, true, None).unwrap();
         assert_eq!(inv.items.len(), 2, "高峰/空闲应各成一行");
         assert!((inv.total - 3.0).abs() < 1e-9, "2.0 + 1.0 = 3.0，total={}", inv.total);
         assert!(inv.items.iter().any(|i| i.price_source.contains("高峰")));
         assert!(inv.items.iter().any(|i| i.price_source.contains("空闲")));
+    }
+
+    fn usd_table() -> Vec<VendorRates> {
+        vec![VendorRates {
+            vendor: "anthropic".into(), currency: "USD".into(),
+            effective_from: "2026-11-01".into(),
+            time_tiers: None,
+            models: vec![ModelRate {
+                name: "claude-sonnet-5-5".into(),
+                input_per_mtok: 2.0, output_per_mtok: 10.0,
+                cache_read_per_mtok: 0.1, cache_write_per_mtok: 2.5,
+            }],
+            tool_requests: None,
+        }]
+    }
+
+    /// 账单币种跟随命中的费率条目（Anthropic = USD），不再硬编码 CNY。
+    #[test]
+    fn usd_invoice_uses_entry_currency() {
+        let evs = vec![ev(Some("ACME"), "claude-sonnet-5-5-20260101", 1_000_000, 0, 0, 0, 0)];
+        let inv = build("ACME", &evs, &usd_table(), 0.0, true, None).unwrap();
+        assert_eq!(inv.currency, "USD");
+        assert!((inv.total - 2.0).abs() < 1e-9, "total={}", inv.total);
+    }
+
+    /// 单币种约束：同一客户跨币种时明确报错，不做隐式汇率换算。
+    #[test]
+    fn mixed_currency_invoice_is_rejected() {
+        let mut cny = ev(Some("ACME"), "deepseek-flash", 1_000_000, 0, 0, 0, 0);
+        cny.ts = "2026-11-03T00:00:00Z".into();
+        let mut usd = ev(Some("ACME"), "claude-sonnet-5-5", 1_000_000, 0, 0, 0, 0);
+        usd.ts = "2026-11-03T00:00:00Z".into();
+        usd.currency = "USD".into();
+        let mut table = table();
+        table.extend(usd_table());
+        let err = build("ACME", &[cny, usd], &table, 0.0, true, None).unwrap_err();
+        match err {
+            BillError::MixedCurrency(list) => {
+                assert!(list.contains(&"CNY".to_string()));
+                assert!(list.contains(&"USD".to_string()));
+            }
+        }
     }
 }
