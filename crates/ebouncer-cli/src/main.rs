@@ -84,9 +84,12 @@ enum Cmd {
         /// 同时生成可验证证据包 .ebc.zip
         #[arg(long)]
         bundle: bool,
-        /// 无水印版（前 3 张免费，之后带水印）
+        /// 兼容旧脚本：已无作用（默认无水印）
         #[arg(long)]
         trial_clean: bool,
+        /// 给 PDF/HTML 加演示水印（默认关闭）
+        #[arg(long)]
+        watermark: bool,
         #[arg(long)]
         data_dir: Option<PathBuf>,
     },
@@ -99,6 +102,9 @@ enum Cmd {
         /// 服务费比例（报价模式；成本核算请留 0，默认 0）
         #[arg(long, default_value_t = 0.0)]
         markup: f64,
+        /// 给包内账单加演示水印（默认关闭）
+        #[arg(long)]
+        watermark: bool,
         /// 附带审计链（命令文本已脱敏；默认不带）
         #[arg(long)]
         with_audit: bool,
@@ -758,7 +764,8 @@ fn run(cmd: Cmd) -> i32 {
             out,
             pdf,
             bundle: make_bundle,
-            trial_clean,
+            trial_clean: _,
+            watermark: add_watermark,
             data_dir,
         } => {
             let dir = resolve_data_dir(&data_dir);
@@ -767,6 +774,7 @@ fn run(cmd: Cmd) -> i32 {
             };
             let format = if pdf { BillFmt::Pdf } else { format };
             let out = out || pdf;
+            let watermark = add_watermark;
             let path = dir.join("ledger.jsonl");
             let (evs, _) = ledger::read_all(&path).unwrap_or_else(|_| (Vec::new(), 0));
             if evs.is_empty() {
@@ -779,27 +787,6 @@ fn run(cmd: Cmd) -> i32 {
                 .filter(|e| ts_is_valid(&e.ts) && e.ts >= cutoff)
                 .collect();
             let table = load_rates(&dir);
-
-            // 次数级试用：前 3 张无水印
-            let trial_file = dir.join("trial.json");
-            let mut used: u32 = std::fs::read_to_string(&trial_file)
-                .ok()
-                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                .and_then(|v| v.get("clean_invoices").and_then(|n| n.as_u64()))
-                .map(|n| n as u32)
-                .unwrap_or(0);
-            let mut watermark = true;
-            if trial_clean {
-                if used < 3 {
-                    watermark = false;
-                    used += 1;
-                    let _ = std::fs::create_dir_all(&dir);
-                    let _ = std::fs::write(&trial_file, format!("{{\"clean_invoices\": {used}}}"));
-                    eprintln!("无水印试用额度：{used}/3 已用");
-                } else {
-                    eprintln!("无水印额度已用完（3/3），本次带水印。");
-                }
-            }
 
             let basis = ledger::file_sha256(&path).ok();
             let inv = match ebouncer_core::bill::build(
@@ -1005,6 +992,7 @@ fn run(cmd: Cmd) -> i32 {
             client,
             days,
             markup,
+            watermark: add_watermark,
             with_audit,
             data_dir,
         } => {
@@ -1034,7 +1022,7 @@ fn run(cmd: Cmd) -> i32 {
                 events: &evs,
                 table: &table,
                 markup,
-                watermark: true,
+                watermark: add_watermark,
                 data_basis: basis,
                 audit_dir: with_audit.then_some(dir.as_path()),
                 ebc_version: env!("CARGO_PKG_VERSION"),

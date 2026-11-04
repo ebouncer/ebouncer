@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! 账单渲染：Invoice → 打印级 HTML →（本机 Chrome/Edge 无头）PDF。
-//! 水印（免费版）为平铺斜排 SVG 背景；`--trial-clean` / 付费后 watermark=false 自然无痕。
+//! 水印只用于演示/截图（`--watermark`）；正式账单默认无水印，页脚保留来源与指纹。
 //! 无浏览器时降级：HTML 即交付物，命令行给出提示——PDF 只是糖，数据才是产品。
 
 use crate::bill::{Invoice, group_digits, tier_label, unit_basis};
@@ -124,7 +124,7 @@ pub fn invoice_html(inv: &Invoice) -> String {
         basis = esc(inv.data_basis.as_deref().unwrap_or("-")),
         rates_fp = esc(&inv.rates_fingerprint[..inv.rates_fingerprint.len().min(12)]),
         ver = crate::VERSION,
-        watermark_note = if inv.watermark { " · 免费版（带水印）" } else { "" },
+        watermark_note = if inv.watermark { " · 演示水印" } else { "" },
     )
 }
 

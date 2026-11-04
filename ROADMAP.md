@@ -2,7 +2,7 @@
 
 ## v0.1（当前，2026-11）—— 记账与开票闭环
 - [x] 跨工具账本：DSH（真实日志验证）/ Claude Code / Codex（适配器就绪，契约待真实样本回归）
-- [x] 客户归因与账单：`ebc tag` / `ebc bill`（table/csv/json/pdf，markup，3 张无水印试用）
+- [x] 客户归因与账单：`ebc tag` / `ebc bill`（table/csv/json/pdf，markup，默认无水印）
 - [x] 单币种计价：DeepSeek（CNY）+ Anthropic（USD），混币客户明确拒绝；多币种汇率层随后
 - [x] 命令防火墙 dry-run（shell 级）：`ebc init` 注入交互式 shell 钩子，命中规则落审计链（落盘前脱敏）+ 尾部 checkpoint（截断可发现）
 - [x] 费率表按事件时间选生效版本（厂商调价，历史账本零迁移）

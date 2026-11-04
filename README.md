@@ -58,7 +58,7 @@ ebc bill --client "客户名" --pdf --bundle
 
 - `ebc bill` 无参数 = 列出可开票客户
 - 成本核算**不加** `--markup`；`--markup 0.2` 是报价单（含服务费）
-- 前 3 张可加 `--trial-clean` 去水印
+- 默认无水印；`--watermark` 只用于演示/截图
 - 完整命令见 [INSTALL.md](INSTALL.md)；上手清单见 [BETA.md](BETA.md)
 
 ## 数据都在你自己的机器上

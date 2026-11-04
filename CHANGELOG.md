@@ -16,6 +16,7 @@
 - **可携带证据包（.ebc.zip）**：`ebc bundle --client X` 打包 manifest + SHA256SUMS + invoice + 账本切片 + 费率快照（可选 `--with-audit` 带审计链）；`ebc verify-bundle` 离线校验哈希、用包内账本 + 费率复算账单、校验费率指纹与审计链。ZIP 为 store-only 自实现（不新增依赖）；干净 HOME 下可验证，不读 `~/.ebouncer`。新增 4 条回归测试。
 
 ### 变更
+- **正式版默认无水印**：账单/证据包默认干净 PDF；`--trial-clean` 保留为兼容参数但无作用；`--watermark` 仅用于演示/截图；不再读写 `trial.json`。
 - **成本账单与报价单分离**：`--markup` 默认 0；成本账单标题为「AI 用量账单」，不出现「加成/服务费」字样；只有显式 `--markup > 0` 时才生成「AI 用量报价单」，费用称「服务费 X%」。控制台/CSV/HTML 同步。
 - **账单可读性**：PDF/HTML 与控制台表格新增「计价单位 / 价档」列（1M tokens / 1K 次；高峰 / 空闲 / 按次 / 统一），数量加千分位，金额带币种符号；周期只显示日期、生成时间去掉纳秒；新增账单编号 `INV-YYYYMMDD-<账本指纹前 8 位>`。
 - **定位纠正（外部评审反馈）**：README/BETA/SECURITY 不再声称"宿主做不到命令级拦截/留痕"——Claude Code / Codex / Cursor 均已自带 hooks，且支持托管配置锁定。现在明确：v0.1 的 shell 钩子只覆盖**交互式终端里人敲的命令**，agent 的 `bash -c` 不经过；文本规则可被 `python -c`/变量拼接/`curl|sh` 绕过；同一 UID 下审计只能"可发现"、不能"不可篡改"。差异化改为跨工具账本/开票/证据可携带，宿主原生 hook 适配排进 v0.2。
@@ -37,7 +38,7 @@
 ### 新增
 - **ebc ledger**：跨工具 AI 花费账本。DSH 已用真实日志验证（多帧 zstd、会话去重）；Claude Code / Codex 适配器就绪，契约待真实样本回归（含 Codex token_count 重发的重复计费规避）。
 - **ebc ingest**：递归扫描宿主日志目录入账，K2 优先级客户归因（显式 > 项目 `.ebouncer/client` > git remote 映射）。
-- **ebc bill**：按客户出账（table/csv/json/pdf）；markup 加成、估算口径与账本指纹随单；免费版前 3 张无水印（§6.2 次数级试用）；导出永不覆盖。
+- **ebc bill**：按客户出账（table/csv/json/pdf）；markup 仅用于报价模式、估算口径与账本指纹随单；默认无水印；导出永不覆盖。
 - **ebc init / hook / uninstall**：shell 级命令防火墙（dry-run，仅覆盖交互式终端）。zsh preexec / bash PROMPT_COMMAND 注入（预览确认制、BEGIN/END 幂等块）；33 条危险命令出厂基线；命中命令落盘前脱敏（D3）写入哈希审计链 + `audit.head` 尾部锚点（可发现截断）；任何内部失败静默放行（fail-open）；卸载保留证据链。
 - **ebc doctor / audit-verify / demo / rules-check**：环境自检、审计链校验、样例账本、规则干跑。
 - **费率表**：按事件时间选生效版本（厂商调价不改历史账本），版本内再按事件本地时间落到高峰/空闲价档（2026-11-04 官方定价页复核）；出厂内嵌 DeepSeek（CNY）+ Anthropic（USD）两套表，单币种账单；DeepSeek 时段价 + Search/Fetch 按次价（2026-11-02 官方定价页核验）。

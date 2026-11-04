@@ -38,7 +38,7 @@ ebc bill                # 不带参数：列出可开票对象 + 下一行可复
 ebc bill --client 测试甲方 --pdf
 ```
 
-**预期**：`~/.ebouncer/exports/` 里出现 PDF（明细 + 合计 + 账本指纹 + 斜排水印）。前 3 张加 `--trial-clean` 无水印；`--pdf --bundle` 可同时出证据包。
+**预期**：`~/.ebouncer/exports/` 里出现 PDF（明细 + 合计 + 账本指纹，默认无水印）。`--pdf --bundle` 可同时出证据包。
 
 ## 30 秒出一份可验证证据包
 

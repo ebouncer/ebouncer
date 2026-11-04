@@ -19,7 +19,7 @@ ebc bundle --help  # 能打印帮助 = 新版
 ```
 
 - 不想改 PATH：`EBC_NO_PATH=1 curl ... | sh`
-- 固定版本：`EBC_VERSION=v0.1.0-rc.8 curl ... | sh`
+- 固定版本：`EBC_VERSION=v0.1.0-rc.10 curl ... | sh`
 - 只支持 x86_64；arm64 在 v0.2。
 
 ### Windows（PowerShell 5.1+，无需管理员）
@@ -36,7 +36,7 @@ ebc --version
 ebc bundle --help
 ```
 
-- 固定版本：`$env:EBC_VERSION="v0.1.0-rc.8"; irm ... | iex`
+- 固定版本：`$env:EBC_VERSION="v0.1.0-rc.10"; irm ... | iex`
 - 不改 PATH：`$env:EBC_NO_PATH="1"; irm ... | iex`
 - Windows 需要 Edge 或 Chrome 才能出 PDF；没有时自动降级为 HTML。
 
@@ -72,7 +72,7 @@ ebc bill --client "测试甲方" --pdf --bundle   # PDF + 可验证证据包
   - Windows：`%USERPROFILE%\.ebouncer\exports\`
 - 导出永不覆盖；同名自动加 `-2`、`-3`。
 - **成本核算不要加 `--markup`**；`--markup 0.2` 是报价单（含 20% 服务费），标题会变成「AI 用量报价单」。
-- 前 3 张 PDF 可加 `--trial-clean` 去水印，之后带水印；`--format csv/json` 不受水印影响。
+- 默认无水印；`--watermark` 只用于演示/截图。`--trial-clean` 保留为兼容参数，已无作用。
 - 同一客户跨币种（CNY + USD）会被明确拒绝；v0.1 不做汇率换算。
 
 ## 4. 常用命令
@@ -114,7 +114,7 @@ ebc uninstall        # 摘掉 shell 钩子；账本与审计链保留
 | 金额是 0 | 该模型没有费率条目；`ebc doctor` 看，或等费率表更新 |
 | 金额和直觉差很多 | 先看 `ebc ledger` 的价档（高峰/空闲）和 `--days` 窗口 |
 | 客户跨币种报错 | 按币种拆客户（v0.1 不做汇率） |
-| 水印去不掉 | 3 张试用已用完；成本核算可用 CSV/JSON |
+| 水印去不掉 | 正式版默认无水印；检查是否显式传了 `--watermark` |
 
 ## 7. 数据与隐私
 
