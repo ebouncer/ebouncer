@@ -82,6 +82,18 @@ pub fn invoice_html(inv: &Invoice) -> String {
         ));
     }
     let no = invoice_no(inv);
+    // 成本账单不含任何加成；markup > 0 时是"报价单"，费用称"服务费"。
+    let quote = inv.markup > 0.0;
+    let title = if quote {
+        "AI 用量报价单"
+    } else {
+        "AI 用量账单"
+    };
+    let total_suffix = if quote {
+        format!("（含服务费 {:.0}% · 估算未含税）", inv.markup * 100.0)
+    } else {
+        "（估算未含税）".to_string()
+    };
     format!(
         "<!doctype html><html><head><meta charset=utf-8><title>Invoice {client}</title>\
     <style>*{{box-sizing:border-box;margin:0}}@page{{size:A4;margin:18mm}}body{{font:14px/1.6 'Segoe UI',system-ui,sans-serif;color:#111;{wm}}}\
@@ -90,14 +102,15 @@ pub fn invoice_html(inv: &Invoice) -> String {
     th,td{{text-align:left;padding:5px 5px;border-bottom:1px solid #ddd}}th{{font-size:11px;color:#555;background:#fafafa}}\
     .n{{text-align:right;font-variant-numeric:tabular-nums}}.note{{color:#999;font-size:10px;margin-top:2px}}.total{{margin-top:18px;text-align:right;font-size:18px}}\
     .meta{{margin-top:26px;font-size:11px;color:#888;border-top:1px solid #eee;padding-top:8px}}</style></head>\
-    <body><h1>AI 用量账单 · {client}</h1>\
+    <body><h1>{title} · {client}</h1>\
     <div class=muted>编号 {no} · 周期 {from} ~ {to} · 币种 {currency} · 生成于 {gen}</div>\
     <table><thead><tr><th>工具</th><th>科目</th><th>计价单位</th><th>价档</th><th class=n>数量</th><th class=n>单价</th><th class=n>金额</th></tr></thead>\
     <tbody>{rows}</tbody></table>\
-    <div class=total>合计：{sym}{total:.2} {currency}（加成 {markup:.0}% · 估算未含税）</div>\
+    <div class=total>合计：{sym}{total:.2} {currency}{total_suffix}</div>\
     <div class=meta>口径：token×厂商公开定价页单价 + 工具按次计费；高峰/空闲按事件时间分档，按次价不随时段折扣；单价单位：token 每百万、按次每千次。估算未含税；金额以厂商账单为准，本单提供归因分项。\
     账本指纹 {basis} · 费率表指纹 {rates_fp} · eBouncer v{ver}{watermark_note}</div></body></html>",
         client = esc(&inv.client),
+        title = title,
         no = esc(&no),
         from = esc(&fmt_date(&inv.period.from)),
         to = esc(&fmt_date(&inv.period.to)),
@@ -107,7 +120,7 @@ pub fn invoice_html(inv: &Invoice) -> String {
         wm = wm,
         rows = rows,
         total = inv.total,
-        markup = inv.markup * 100.0,
+        total_suffix = total_suffix,
         basis = esc(inv.data_basis.as_deref().unwrap_or("-")),
         rates_fp = esc(&inv.rates_fingerprint[..inv.rates_fingerprint.len().min(12)]),
         ver = crate::VERSION,
@@ -297,6 +310,18 @@ mod tests {
             h.contains("<div class=note>按次计费自 2026-11-01 起"),
             "{h}"
         );
+    }
+
+    #[test]
+    fn cost_invoice_has_no_service_fee_wording() {
+        let mut i = inv(false);
+        i.markup = 0.0;
+        i.total = 2.0;
+        let h = invoice_html(&i);
+        assert!(h.contains("AI 用量账单"), "{h}");
+        assert!(!h.contains("服务费"), "{h}");
+        assert!(!h.contains("加成"), "{h}");
+        assert!(!h.contains("报价单"), "{h}");
     }
     #[test]
     fn clean_invoice_has_no_watermark() {

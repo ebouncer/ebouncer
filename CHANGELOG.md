@@ -14,6 +14,7 @@
 - **可携带证据包（.ebc.zip）**：`ebc bundle --client X` 打包 manifest + SHA256SUMS + invoice + 账本切片 + 费率快照（可选 `--with-audit` 带审计链）；`ebc verify-bundle` 离线校验哈希、用包内账本 + 费率复算账单、校验费率指纹与审计链。ZIP 为 store-only 自实现（不新增依赖）；干净 HOME 下可验证，不读 `~/.ebouncer`。新增 4 条回归测试。
 
 ### 变更
+- **成本账单与报价单分离**：`--markup` 默认 0；成本账单标题为「AI 用量账单」，不出现「加成/服务费」字样；只有显式 `--markup > 0` 时才生成「AI 用量报价单」，费用称「服务费 X%」。控制台/CSV/HTML 同步。
 - **账单可读性**：PDF/HTML 与控制台表格新增「计价单位 / 价档」列（1M tokens / 1K 次；高峰 / 空闲 / 按次 / 统一），数量加千分位，金额带币种符号；周期只显示日期、生成时间去掉纳秒；新增账单编号 `INV-YYYYMMDD-<账本指纹前 8 位>`。
 - **定位纠正（外部评审反馈）**：README/BETA/SECURITY 不再声称"宿主做不到命令级拦截/留痕"——Claude Code / Codex / Cursor 均已自带 hooks，且支持托管配置锁定。现在明确：v0.1 的 shell 钩子只覆盖**交互式终端里人敲的命令**，agent 的 `bash -c` 不经过；文本规则可被 `python -c`/变量拼接/`curl|sh` 绕过；同一 UID 下审计只能"可发现"、不能"不可篡改"。差异化改为跨工具账本/开票/证据可携带，宿主原生 hook 适配排进 v0.2。
 - `ebc --help` 定位改为"跨工具 AI 花费账本与审计证据层"；Codex 事件币种改为 USD（原为 CNY，与其真实计费一致）。

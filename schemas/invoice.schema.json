@@ -30,7 +30,7 @@
         }
       }
     },
-    "markup": { "type": "number", "minimum": 0, "default": 0, "description": "加成比例（服务报价用）" },
+    "markup": { "type": "number", "minimum": 0, "default": 0, "description": "服务费比例（仅报价模式）；成本账单为 0，不得混入成本凭证" },
     "total": { "type": "number", "minimum": 0, "description": "含 markup 后的合计" },
     "currency": { "type": "string", "enum": ["CNY", "USD"] },
     "generated_at": { "type": "string", "format": "date-time" },

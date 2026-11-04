@@ -377,13 +377,18 @@ impl Invoice {
 
     /// CSV：头注释写口径（PRD §3.3.5 红线）；带费率快照指纹，导出件也能回对价格依据。
     pub fn to_csv(&self) -> String {
+        let fee = if self.markup > 0.0 {
+            format!(" · 服务费 {:.0}%", self.markup * 100.0)
+        } else {
+            String::new()
+        };
         let mut s = format!(
-            "# 客户: {} · 周期: {} ~ {} · 口径: token×单价+按次 · 加成 {:.0}% · 估算未含税 · 水印 {}\n",
+            "# 客户: {} · 周期: {} ~ {} · 口径: token×单价+按次 · 估算未含税 · 水印 {}{}\n",
             self.client,
             self.period.from,
             self.period.to,
-            self.markup * 100.0,
-            if self.watermark { "是" } else { "否" }
+            if self.watermark { "是" } else { "否" },
+            fee
         );
         s.push_str(&format!(
             "# 账本指纹: {} · 费率表指纹: {}（条目快照见 JSON 导出的 rates_snapshot）\n",
@@ -489,6 +494,11 @@ mod tests {
         assert!(csv.starts_with("# 客户: ACME"));
         assert!(csv.contains("口径:"));
         assert!(csv.contains("费率表指纹:"), "{csv}");
+        assert!(!csv.contains("加成"), "成本账单 CSV 不应出现加成：{csv}");
+        assert!(
+            !csv.contains("服务费"),
+            "成本账单 CSV 不应出现服务费：{csv}"
+        );
     }
 
     /// 回归（2026-11-04）：cache_write 必须单列成行并随价档打折

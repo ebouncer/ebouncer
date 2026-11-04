@@ -68,6 +68,7 @@ enum Cmd {
     Bill {
         #[arg(long)]
         client: Option<String>,
+        /// 服务费比例（报价模式；成本核算请留 0，默认 0）
         #[arg(long, default_value_t = 0.0)]
         markup: f64,
         #[arg(long, default_value = "30")]
@@ -89,6 +90,7 @@ enum Cmd {
         client: String,
         #[arg(long, default_value = "30")]
         days: i64,
+        /// 服务费比例（报价模式；成本核算请留 0，默认 0）
         #[arg(long, default_value_t = 0.0)]
         markup: f64,
         /// 附带审计链（命令文本已脱敏；默认不带）
@@ -823,13 +825,18 @@ fn run(cmd: Cmd) -> i32 {
                 BillFmt::Json => println!("{}", inv.to_json()),
                 BillFmt::Csv => println!("{}", inv.to_csv()),
                 BillFmt::Table | BillFmt::Pdf => {
+                    let fee = if inv.markup > 0.0 {
+                        format!(" · 服务费 {:.0}%", inv.markup * 100.0)
+                    } else {
+                        String::new()
+                    };
                     println!(
-                        "客户 {} · 周期 {} ~ {} · 币种 {} · 加成 {:.0}% · 水印 {}",
+                        "客户 {} · 周期 {} ~ {} · 币种 {}{} · 水印 {}",
                         inv.client,
                         inv.period.from,
                         inv.period.to,
                         inv.currency,
-                        inv.markup * 100.0,
+                        fee,
                         if inv.watermark {
                             "是"
                         } else {
@@ -853,8 +860,14 @@ fn run(cmd: Cmd) -> i32 {
                         );
                     }
                     let basis = inv.data_basis.as_deref().unwrap_or("-");
+                    let total_label = if inv.markup > 0.0 {
+                        format!("合计（含服务费 {:.0}%）：", inv.markup * 100.0)
+                    } else {
+                        "合计：".to_string()
+                    };
                     println!(
-                        "合计（含加成）：{} · 估算未含税 · 账本指纹 {} · 费率表指纹 {}",
+                        "{}{} · 估算未含税 · 账本指纹 {} · 费率表指纹 {}",
+                        total_label,
                         money(&inv.currency, inv.total),
                         &basis[..basis.len().min(12)],
                         &inv.rates_fingerprint[..inv.rates_fingerprint.len().min(12)]
