@@ -345,10 +345,8 @@ pub fn estimate(ev: &LedgerEvent, table: &[VendorRates]) -> f64 {
 /// 无模型信息（纯 Search/Fetch 按次）事件适用的费率条目：按事件时间选生效版本。
 /// v0.1 简化：账本不记厂商，多条厂商都配了按次价时取生效时间最新的那一条。
 pub fn tool_entry_at<'a>(ev_ts: &str, table: &'a [VendorRates]) -> Option<&'a VendorRates> {
-    let applicable: Vec<&VendorRates> = table
-        .iter()
-        .filter(|v| v.tool_requests.is_some())
-        .collect();
+    let applicable: Vec<&VendorRates> =
+        table.iter().filter(|v| v.tool_requests.is_some()).collect();
     applicable
         .iter()
         .copied()
@@ -383,20 +381,40 @@ mod tests {
 
     fn ev() -> LedgerEvent {
         LedgerEvent {
-            ts: "2026-11-01T00:00:00Z".into(), session_id: "s".into(), tool: "codex".into(),
-            project: "p".into(), client: None, model: Some("deepseek-chat".into()),
-            tokens_in: 1_000_000, tokens_out: 1_000_000, cache_read: 0, cache_write: 0,
-            cost_native: 0.0, currency: "CNY".into(),
-            requests_search: 1000, requests_fetch: 0,
+            ts: "2026-11-01T00:00:00Z".into(),
+            session_id: "s".into(),
+            tool: "codex".into(),
+            project: "p".into(),
+            client: None,
+            model: Some("deepseek-chat".into()),
+            tokens_in: 1_000_000,
+            tokens_out: 1_000_000,
+            cache_read: 0,
+            cache_write: 0,
+            cost_native: 0.0,
+            currency: "CNY".into(),
+            requests_search: 1000,
+            requests_fetch: 0,
         }
     }
 
     fn entry(eff: &str, input: f64, output: f64, per_k: f64) -> VendorRates {
         VendorRates {
-            vendor: "deepseek".into(), currency: "CNY".into(), effective_from: eff.into(),
+            vendor: "deepseek".into(),
+            currency: "CNY".into(),
+            effective_from: eff.into(),
             time_tiers: None,
-            models: vec![ModelRate { name: "deepseek-chat".into(), input_per_mtok: input, output_per_mtok: output, cache_read_per_mtok: 0.0, cache_write_per_mtok: 0.0 }],
-            tool_requests: Some(ToolRequestRate { search_per_k: per_k, fetch_per_k: per_k }),
+            models: vec![ModelRate {
+                name: "deepseek-chat".into(),
+                input_per_mtok: input,
+                output_per_mtok: output,
+                cache_read_per_mtok: 0.0,
+                cache_write_per_mtok: 0.0,
+            }],
+            tool_requests: Some(ToolRequestRate {
+                search_per_k: per_k,
+                fetch_per_k: per_k,
+            }),
         }
     }
 
@@ -439,7 +457,10 @@ mod tests {
 
     #[test]
     fn event_older_than_all_versions_uses_oldest() {
-        let table = vec![entry("2026-11-01", 2.0, 3.0, 5.0), entry("2026-12-01", 4.0, 6.0, 9.0)];
+        let table = vec![
+            entry("2026-11-01", 2.0, 3.0, 5.0),
+            entry("2026-12-01", 4.0, 6.0, 9.0),
+        ];
         let mut e = ev();
         e.ts = "2026-01-01T00:00:00Z".into();
         assert!((estimate(&e, &table) - (2.0 + 3.0 + 5.0)).abs() < 1e-9);
@@ -447,7 +468,10 @@ mod tests {
 
     #[test]
     fn price_at_returns_matching_entry_and_none_when_absent() {
-        let table = vec![entry("2026-09-01", 1.0, 2.0, 5.0), entry("2026-11-01", 2.0, 3.0, 8.0)];
+        let table = vec![
+            entry("2026-09-01", 1.0, 2.0, 5.0),
+            entry("2026-11-01", 2.0, 3.0, 8.0),
+        ];
         let p = price_at("deepseek-chat", "2026-10-15T00:00:00Z", &table).unwrap();
         assert!((p.input_per_mtok() - 1.0).abs() < 1e-9);
         assert!((p.tool_requests.unwrap().search_per_k - 5.0).abs() < 1e-9);
@@ -465,16 +489,33 @@ mod tests {
         ];
         let mut before = ev();
         before.ts = "2026-11-01T00:00:00Z".into();
-        assert!((price_at("deepseek-chat", &before.ts, &table).unwrap().input_per_mtok() - 1.0).abs() < 1e-9);
+        assert!(
+            (price_at("deepseek-chat", &before.ts, &table)
+                .unwrap()
+                .input_per_mtok()
+                - 1.0)
+                .abs()
+                < 1e-9
+        );
         let mut after = ev();
         after.ts = "2026-11-01T02:00:00Z".into();
-        assert!((price_at("deepseek-chat", &after.ts, &table).unwrap().input_per_mtok() - 9.0).abs() < 1e-9);
+        assert!(
+            (price_at("deepseek-chat", &after.ts, &table)
+                .unwrap()
+                .input_per_mtok()
+                - 9.0)
+                .abs()
+                < 1e-9
+        );
     }
 
     /// 无模型事件（纯 Search/Fetch）也要按事件时间选按次价版本，与 token 计价同一时间口径。
     #[test]
     fn tool_only_uses_version_effective_at_event_time() {
-        let table = vec![entry("2026-09-01", 1.0, 1.0, 5.0), entry("2026-11-01", 1.0, 1.0, 8.0)];
+        let table = vec![
+            entry("2026-09-01", 1.0, 1.0, 5.0),
+            entry("2026-11-01", 1.0, 1.0, 8.0),
+        ];
         let mut e = ev();
         e.model = None;
         e.requests_fetch = 0;
@@ -497,7 +538,11 @@ mod tests {
         e.cache_read = 0;
         e.cache_write = 1_000_000;
         let table = std::slice::from_ref(&t);
-        assert!((estimate(&e, table) - 3.75).abs() < 1e-9, "configured={}", estimate(&e, table));
+        assert!(
+            (estimate(&e, table) - 3.75).abs() < 1e-9,
+            "configured={}",
+            estimate(&e, table)
+        );
         t.models[0].cache_write_per_mtok = 0.0;
         let table = std::slice::from_ref(&t);
         assert_eq!(estimate(&e, table), 0.0, "未配置时不得重复计费");
@@ -550,7 +595,11 @@ mod tests {
         v.time_tiers.as_mut().unwrap().holiday_dates = vec!["2026-11-03".into()];
         let table = vec![v];
         let at = |ts: &str| price_at("deepseek-chat", ts, &table).unwrap().tier;
-        assert_eq!(at("2026-11-03T02:00:00Z"), Tier::OffPeak, "节假日 10:00 北京也应空闲");
+        assert_eq!(
+            at("2026-11-03T02:00:00Z"),
+            Tier::OffPeak,
+            "节假日 10:00 北京也应空闲"
+        );
     }
 
     #[test]
@@ -567,12 +616,25 @@ mod tests {
     #[test]
     fn matches_versioned_ids_and_prefers_longest_name() {
         let table = vec![VendorRates {
-            vendor: "anthropic".into(), currency: "USD".into(),
+            vendor: "anthropic".into(),
+            currency: "USD".into(),
             effective_from: "2026-11-01".into(),
             time_tiers: None,
             models: vec![
-                ModelRate { name: "claude-opus-5".into(), input_per_mtok: 5.0, output_per_mtok: 25.0, cache_read_per_mtok: 0.5, cache_write_per_mtok: 6.25 },
-                ModelRate { name: "claude-opus-5-5".into(), input_per_mtok: 4.0, output_per_mtok: 20.0, cache_read_per_mtok: 0.2, cache_write_per_mtok: 5.0 },
+                ModelRate {
+                    name: "claude-opus-5".into(),
+                    input_per_mtok: 5.0,
+                    output_per_mtok: 25.0,
+                    cache_read_per_mtok: 0.5,
+                    cache_write_per_mtok: 6.25,
+                },
+                ModelRate {
+                    name: "claude-opus-5-5".into(),
+                    input_per_mtok: 4.0,
+                    output_per_mtok: 20.0,
+                    cache_read_per_mtok: 0.2,
+                    cache_write_per_mtok: 5.0,
+                },
             ],
             tool_requests: None,
         }];

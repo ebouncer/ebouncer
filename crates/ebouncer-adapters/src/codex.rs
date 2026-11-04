@@ -17,7 +17,9 @@ pub struct CodexAdapter;
 
 impl Adapter for CodexAdapter {
     fn parse_file(&self, path: &Path) -> Vec<LedgerEvent> {
-        let Ok(f) = File::open(path) else { return Vec::new() };
+        let Ok(f) = File::open(path) else {
+            return Vec::new();
+        };
         let mut out = Vec::new();
         let mut session_id = path
             .file_stem()
@@ -27,18 +29,28 @@ impl Adapter for CodexAdapter {
         // 上一条 token_count 的增量，用于识别 issue #14489 的重发
         let mut last_usage: (u64, u64, u64) = (u64::MAX, u64::MAX, u64::MAX);
         for line in BufReader::new(f).lines().map_while(Result::ok) {
-            let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+            let Ok(v) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
             if let Some(sid) = v.pointer("/payload/id").and_then(Value::as_str) {
                 session_id = sid.to_string();
             }
-            let Some(tc) = v.pointer("/payload/last_token_usage") else { continue };
+            let Some(tc) = v.pointer("/payload/last_token_usage") else {
+                continue;
+            };
             if v.pointer("/payload/type").and_then(Value::as_str) != Some("token_count") {
                 continue;
             }
             let key = (
-                tc.get("input_tokens").and_then(Value::as_u64).unwrap_or_default(),
-                tc.get("output_tokens").and_then(Value::as_u64).unwrap_or_default(),
-                tc.get("cached_input_tokens").and_then(Value::as_u64).unwrap_or_default(),
+                tc.get("input_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default(),
+                tc.get("output_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default(),
+                tc.get("cached_input_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default(),
             );
             if key == last_usage {
                 continue; // rate-limit 重发，非新增消耗
@@ -60,8 +72,14 @@ impl Adapter for CodexAdapter {
                     .pointer("/payload/model")
                     .and_then(Value::as_str)
                     .map(String::from),
-                tokens_in: tc.get("input_tokens").and_then(Value::as_u64).unwrap_or_default(),
-                tokens_out: tc.get("output_tokens").and_then(Value::as_u64).unwrap_or_default(),
+                tokens_in: tc
+                    .get("input_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default(),
+                tokens_out: tc
+                    .get("output_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default(),
                 cache_read: tc
                     .get("cached_input_tokens")
                     .and_then(Value::as_u64)

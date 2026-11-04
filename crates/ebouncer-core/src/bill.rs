@@ -5,7 +5,7 @@
 //! 说明——诚实是开票功能的生命线。
 
 use crate::ledger::LedgerEvent;
-use crate::rates::{price_at, tool_entry_at, Tier, VendorRates};
+use crate::rates::{Tier, VendorRates, price_at, tool_entry_at};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,10 +180,13 @@ pub fn build(
         .to_string();
 
     // 聚合：(tool, model, 费率条目+价档) → 数量 + 单价
-    let mut agg: std::collections::BTreeMap<(String, String, Option<RateKey>), (Qty, Option<UnitPrices>)> =
-        Default::default();
+    let mut agg: std::collections::BTreeMap<
+        (String, String, Option<RateKey>),
+        (Qty, Option<UnitPrices>),
+    > = Default::default();
     // 价格快照：只冻结本单实际命中的条目（vendor+生效版本去重，BTreeMap 保证顺序稳定）
-    let mut used_entries: std::collections::BTreeMap<(String, String), VendorRates> = Default::default();
+    let mut used_entries: std::collections::BTreeMap<(String, String), VendorRates> =
+        Default::default();
     // 单币种约束：只由"命中了费率条目"的事件决定；无价模型不参与（金额本来就是 0）
     let mut currencies: std::collections::BTreeSet<String> = Default::default();
     for e in &evts {
@@ -333,26 +336,63 @@ mod tests {
     use super::*;
     use crate::rates::{ModelRate, TimeTiers, ToolRequestRate, VendorRates};
 
-    fn ev(client: Option<&str>, model: &str, ti: u64, to: u64, cr: u64, rs: u64, rf: u64) -> LedgerEvent {
+    fn ev(
+        client: Option<&str>,
+        model: &str,
+        ti: u64,
+        to: u64,
+        cr: u64,
+        rs: u64,
+        rf: u64,
+    ) -> LedgerEvent {
         LedgerEvent {
-            ts: "2026-10-15T00:00:00Z".into(), session_id: "s".into(), tool: "dsh".into(),
-            project: "billing".into(), client: client.map(str::to_string), model: Some(model.into()),
-            tokens_in: ti, tokens_out: to, cache_read: cr, cache_write: 0, cost_native: 0.0,
-            currency: "CNY".into(), requests_search: rs, requests_fetch: rf,
+            ts: "2026-10-15T00:00:00Z".into(),
+            session_id: "s".into(),
+            tool: "dsh".into(),
+            project: "billing".into(),
+            client: client.map(str::to_string),
+            model: Some(model.into()),
+            tokens_in: ti,
+            tokens_out: to,
+            cache_read: cr,
+            cache_write: 0,
+            cost_native: 0.0,
+            currency: "CNY".into(),
+            requests_search: rs,
+            requests_fetch: rf,
         }
     }
     fn table() -> Vec<VendorRates> {
         vec![VendorRates {
-            vendor: "deepseek".into(), currency: "CNY".into(), effective_from: "2026-09-01".into(),
+            vendor: "deepseek".into(),
+            currency: "CNY".into(),
+            effective_from: "2026-09-01".into(),
             time_tiers: None,
-            models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 1.0, output_per_mtok: 2.0, cache_read_per_mtok: 0.1, cache_write_per_mtok: 0.0 }],
-            tool_requests: Some(ToolRequestRate { search_per_k: 5.0, fetch_per_k: 5.0 }),
+            models: vec![ModelRate {
+                name: "deepseek-flash".into(),
+                input_per_mtok: 1.0,
+                output_per_mtok: 2.0,
+                cache_read_per_mtok: 0.1,
+                cache_write_per_mtok: 0.0,
+            }],
+            tool_requests: Some(ToolRequestRate {
+                search_per_k: 5.0,
+                fetch_per_k: 5.0,
+            }),
         }]
     }
     #[test]
     fn builds_invoice_with_markup() {
         let evs = vec![
-            ev(Some("ACME"), "deepseek-flash", 1_000_000, 1_000_000, 1_000_000, 1000, 1000),
+            ev(
+                Some("ACME"),
+                "deepseek-flash",
+                1_000_000,
+                1_000_000,
+                1_000_000,
+                1000,
+                1000,
+            ),
             ev(None, "deepseek-flash", 999_999_999, 0, 0, 0, 0), // 别的客户不应混入
         ];
         let inv = build("ACME", &evs, &table(), 0.2, true, None).unwrap();
@@ -371,7 +411,9 @@ mod tests {
     #[test]
     fn csv_has_basis_header() {
         let evs = vec![ev(Some("ACME"), "deepseek-flash", 1_000_000, 0, 0, 0, 0)];
-        let csv = build("ACME", &evs, &table(), 0.0, true, None).unwrap().to_csv();
+        let csv = build("ACME", &evs, &table(), 0.0, true, None)
+            .unwrap()
+            .to_csv();
         assert!(csv.starts_with("# 客户: ACME"));
         assert!(csv.contains("口径:"));
         assert!(csv.contains("费率表指纹:"), "{csv}");
@@ -382,7 +424,8 @@ mod tests {
     #[test]
     fn bills_cache_write_with_tier_multiplier() {
         let table = vec![VendorRates {
-            vendor: "deepseek".into(), currency: "CNY".into(),
+            vendor: "deepseek".into(),
+            currency: "CNY".into(),
             effective_from: "2026-11-01".into(),
             time_tiers: Some(TimeTiers {
                 peak_windows: vec!["09:00-12:00".into()],
@@ -392,8 +435,11 @@ mod tests {
                 off_peak_multiplier: 0.5,
             }),
             models: vec![ModelRate {
-                name: "cached-model".into(), input_per_mtok: 3.0, output_per_mtok: 15.0,
-                cache_read_per_mtok: 0.3, cache_write_per_mtok: 3.75,
+                name: "cached-model".into(),
+                input_per_mtok: 3.0,
+                output_per_mtok: 15.0,
+                cache_read_per_mtok: 0.3,
+                cache_write_per_mtok: 3.75,
             }],
             tool_requests: None,
         }];
@@ -406,7 +452,11 @@ mod tests {
         let inv = build("ACME", &[peak, idle], &table, 0.0, true, None).unwrap();
         assert_eq!(inv.items.len(), 2, "{:?}", inv.items);
         assert!(inv.items.iter().all(|i| i.category == "cache_write"));
-        assert!((inv.total - (3.75 + 1.875)).abs() < 1e-9, "total={}", inv.total);
+        assert!(
+            (inv.total - (3.75 + 1.875)).abs() < 1e-9,
+            "total={}",
+            inv.total
+        );
         assert!(inv.items.iter().any(|i| i.price_source.contains("高峰")));
         assert!(inv.items.iter().any(|i| i.price_source.contains("空闲")));
     }
@@ -423,7 +473,11 @@ mod tests {
             .find(|i| i.category == "cache_write")
             .expect("应保留 cache_write 行");
         assert_eq!(row.amount, 0.0);
-        assert!(row.note.as_deref().unwrap_or("").contains("未单独收取"), "{:?}", row.note);
+        assert!(
+            row.note.as_deref().unwrap_or("").contains("未单独收取"),
+            "{:?}",
+            row.note
+        );
     }
 
     /// 账单自带价格依据：只冻结本单命中的费率条目，表内顺序不影响指纹，
@@ -431,34 +485,74 @@ mod tests {
     #[test]
     fn freezes_used_rate_entries_with_stable_fingerprint() {
         let v1 = VendorRates {
-            vendor: "deepseek".into(), currency: "CNY".into(), effective_from: "2026-09-01".into(),
+            vendor: "deepseek".into(),
+            currency: "CNY".into(),
+            effective_from: "2026-09-01".into(),
             time_tiers: None,
-            models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 1.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0, cache_write_per_mtok: 0.0 }],
+            models: vec![ModelRate {
+                name: "deepseek-flash".into(),
+                input_per_mtok: 1.0,
+                output_per_mtok: 0.0,
+                cache_read_per_mtok: 0.0,
+                cache_write_per_mtok: 0.0,
+            }],
             tool_requests: None,
         };
         let v2 = VendorRates {
-            vendor: "deepseek".into(), currency: "CNY".into(), effective_from: "2026-11-01".into(),
+            vendor: "deepseek".into(),
+            currency: "CNY".into(),
+            effective_from: "2026-11-01".into(),
             time_tiers: None,
-            models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 2.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0, cache_write_per_mtok: 0.0 }],
+            models: vec![ModelRate {
+                name: "deepseek-flash".into(),
+                input_per_mtok: 2.0,
+                output_per_mtok: 0.0,
+                cache_read_per_mtok: 0.0,
+                cache_write_per_mtok: 0.0,
+            }],
             tool_requests: None,
         };
         let mut e = ev(Some("ACME"), "deepseek-flash", 1_000_000, 0, 0, 0, 0);
         e.ts = "2026-11-03T00:00:00Z".into();
 
-        let inv = build("ACME", std::slice::from_ref(&e), &[v1.clone(), v2.clone()], 0.0, true, None).unwrap();
+        let inv = build(
+            "ACME",
+            std::slice::from_ref(&e),
+            &[v1.clone(), v2.clone()],
+            0.0,
+            true,
+            None,
+        )
+        .unwrap();
         assert_eq!(inv.rates_snapshot.len(), 1, "只应冻结命中的版本");
         assert_eq!(inv.rates_snapshot[0].effective_from, "2026-11-01");
         assert_eq!(inv.rates_fingerprint.len(), 64);
         assert!(inv.rates_fingerprint.chars().all(|c| c.is_ascii_hexdigit()));
 
         // 费率表顺序变化不影响快照指纹（可复现）
-        let rev = build("ACME", std::slice::from_ref(&e), &[v2.clone(), v1.clone()], 0.0, true, None).unwrap();
+        let rev = build(
+            "ACME",
+            std::slice::from_ref(&e),
+            &[v2.clone(), v1.clone()],
+            0.0,
+            true,
+            None,
+        )
+        .unwrap();
         assert_eq!(rev.rates_fingerprint, inv.rates_fingerprint);
 
         // 用到的单价变化 → 指纹必须变化
         let mut v2b = v2;
         v2b.models[0].input_per_mtok = 3.0;
-        let changed = build("ACME", std::slice::from_ref(&e), &[v1, v2b], 0.0, true, None).unwrap();
+        let changed = build(
+            "ACME",
+            std::slice::from_ref(&e),
+            &[v1, v2b],
+            0.0,
+            true,
+            None,
+        )
+        .unwrap();
         assert_ne!(changed.rates_fingerprint, inv.rates_fingerprint);
     }
 
@@ -474,7 +568,11 @@ mod tests {
         assert_eq!(inv.items.len(), 2, "{:?}", inv.items);
         assert!((inv.total - 7.5).abs() < 1e-9, "total={}", inv.total);
         assert!(inv.items.iter().all(|i| i.amount > 0.0));
-        assert!(inv.items.iter().any(|i| i.price_source.contains("按次价")), "{:?}", inv.items);
+        assert!(
+            inv.items.iter().any(|i| i.price_source.contains("按次价")),
+            "{:?}",
+            inv.items
+        );
         // 与账本汇总（rates::estimate）口径一致
         let estimated: f64 = evs.iter().map(|x| crate::rates::estimate(x, &t)).sum();
         assert!(
@@ -491,17 +589,31 @@ mod tests {
     fn splits_items_by_rate_version_across_price_change() {
         let table = vec![
             VendorRates {
-                vendor: "deepseek".into(), currency: "CNY".into(),
+                vendor: "deepseek".into(),
+                currency: "CNY".into(),
                 effective_from: "2026-09-01".into(),
                 time_tiers: None,
-                models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 1.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0, cache_write_per_mtok: 0.0 }],
+                models: vec![ModelRate {
+                    name: "deepseek-flash".into(),
+                    input_per_mtok: 1.0,
+                    output_per_mtok: 0.0,
+                    cache_read_per_mtok: 0.0,
+                    cache_write_per_mtok: 0.0,
+                }],
                 tool_requests: None,
             },
             VendorRates {
-                vendor: "deepseek".into(), currency: "CNY".into(),
+                vendor: "deepseek".into(),
+                currency: "CNY".into(),
                 effective_from: "2026-11-01".into(),
                 time_tiers: None,
-                models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 2.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0, cache_write_per_mtok: 0.0 }],
+                models: vec![ModelRate {
+                    name: "deepseek-flash".into(),
+                    input_per_mtok: 2.0,
+                    output_per_mtok: 0.0,
+                    cache_read_per_mtok: 0.0,
+                    cache_write_per_mtok: 0.0,
+                }],
                 tool_requests: None,
             },
         ];
@@ -513,8 +625,14 @@ mod tests {
         assert_eq!(inv.items.len(), 2, "跨版本应拆成两行");
         assert!((inv.total - 3.0).abs() < 1e-9, "total={}", inv.total);
         let sources: Vec<&str> = inv.items.iter().map(|i| i.price_source.as_str()).collect();
-        assert!(sources.iter().any(|s| s.contains("2026-09-01")), "{sources:?}");
-        assert!(sources.iter().any(|s| s.contains("2026-11-01")), "{sources:?}");
+        assert!(
+            sources.iter().any(|s| s.contains("2026-09-01")),
+            "{sources:?}"
+        );
+        assert!(
+            sources.iter().any(|s| s.contains("2026-11-01")),
+            "{sources:?}"
+        );
     }
 
     /// 回归（2026-11-04）：同一费率版本内跨高峰/空闲两个价档时，账单同样要拆行，
@@ -522,7 +640,8 @@ mod tests {
     #[test]
     fn splits_items_by_peak_and_off_peak_tier() {
         let table = vec![VendorRates {
-            vendor: "deepseek".into(), currency: "CNY".into(),
+            vendor: "deepseek".into(),
+            currency: "CNY".into(),
             effective_from: "2026-11-01".into(),
             time_tiers: Some(TimeTiers {
                 peak_windows: vec!["09:00-12:00".into(), "14:00-18:00".into()],
@@ -531,7 +650,13 @@ mod tests {
                 holiday_dates: vec![],
                 off_peak_multiplier: 0.5,
             }),
-            models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 2.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0, cache_write_per_mtok: 0.0 }],
+            models: vec![ModelRate {
+                name: "deepseek-flash".into(),
+                input_per_mtok: 2.0,
+                output_per_mtok: 0.0,
+                cache_read_per_mtok: 0.0,
+                cache_write_per_mtok: 0.0,
+            }],
             tool_requests: None,
         }];
         let mut peak = ev(Some("ACME"), "deepseek-flash", 1_000_000, 0, 0, 0, 0);
@@ -540,20 +665,27 @@ mod tests {
         idle.ts = "2026-11-03T15:00:00Z".into(); // 周二 23:00 北京 → 空闲
         let inv = build("ACME", &[peak, idle], &table, 0.0, true, None).unwrap();
         assert_eq!(inv.items.len(), 2, "高峰/空闲应各成一行");
-        assert!((inv.total - 3.0).abs() < 1e-9, "2.0 + 1.0 = 3.0，total={}", inv.total);
+        assert!(
+            (inv.total - 3.0).abs() < 1e-9,
+            "2.0 + 1.0 = 3.0，total={}",
+            inv.total
+        );
         assert!(inv.items.iter().any(|i| i.price_source.contains("高峰")));
         assert!(inv.items.iter().any(|i| i.price_source.contains("空闲")));
     }
 
     fn usd_table() -> Vec<VendorRates> {
         vec![VendorRates {
-            vendor: "anthropic".into(), currency: "USD".into(),
+            vendor: "anthropic".into(),
+            currency: "USD".into(),
             effective_from: "2026-11-01".into(),
             time_tiers: None,
             models: vec![ModelRate {
                 name: "claude-sonnet-5-5".into(),
-                input_per_mtok: 2.0, output_per_mtok: 10.0,
-                cache_read_per_mtok: 0.1, cache_write_per_mtok: 2.5,
+                input_per_mtok: 2.0,
+                output_per_mtok: 10.0,
+                cache_read_per_mtok: 0.1,
+                cache_write_per_mtok: 2.5,
             }],
             tool_requests: None,
         }]
@@ -562,7 +694,15 @@ mod tests {
     /// 账单币种跟随命中的费率条目（Anthropic = USD），不再硬编码 CNY。
     #[test]
     fn usd_invoice_uses_entry_currency() {
-        let evs = vec![ev(Some("ACME"), "claude-sonnet-5-5-20260101", 1_000_000, 0, 0, 0, 0)];
+        let evs = vec![ev(
+            Some("ACME"),
+            "claude-sonnet-5-5-20260101",
+            1_000_000,
+            0,
+            0,
+            0,
+            0,
+        )];
         let inv = build("ACME", &evs, &usd_table(), 0.0, true, None).unwrap();
         assert_eq!(inv.currency, "USD");
         assert!((inv.total - 2.0).abs() < 1e-9, "total={}", inv.total);

@@ -26,7 +26,9 @@ pub struct DshAdapter {
 
 impl Default for DshAdapter {
     fn default() -> Self {
-        Self { client_map: ClientMap::default() }
+        Self {
+            client_map: ClientMap::default(),
+        }
     }
 }
 
@@ -87,7 +89,9 @@ fn is_search_or_fetch(name: &str) -> Option<&'static str> {
 /// 一条纯按次事件（token 全 0，仅 requests_* 计数），tool/call 分支用。
 fn blank_event(session: &str, time_ms: Option<u64>) -> LedgerEvent {
     LedgerEvent {
-        ts: time_ms.map(ts_from_ms).unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string()),
+        ts: time_ms
+            .map(ts_from_ms)
+            .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string()),
         session_id: session.to_string(),
         tool: "dsh".to_string(),
         project: String::new(),
@@ -175,7 +179,9 @@ impl Adapter for DshAdapter {
                 "assistant/message" => {
                     let u = &v["data"]["usage"];
                     events.push(LedgerEvent {
-                        ts: time_ms.map(ts_from_ms).unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string()),
+                        ts: time_ms
+                            .map(ts_from_ms)
+                            .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string()),
                         session_id: session.clone(),
                         tool: "dsh".to_string(),
                         project: String::new(),
@@ -184,10 +190,22 @@ impl Adapter for DshAdapter {
                             .pointer("/data/message/source/model")
                             .and_then(Value::as_str)
                             .map(str::to_string),
-                        tokens_in: u.get("inputTokens").and_then(Value::as_u64).unwrap_or_default(),
-                        tokens_out: u.get("outputTokens").and_then(Value::as_u64).unwrap_or_default(),
-                        cache_read: u.get("cacheReadTokens").and_then(Value::as_u64).unwrap_or_default(),
-                        cache_write: u.get("cacheWriteTokens").and_then(Value::as_u64).unwrap_or_default(),
+                        tokens_in: u
+                            .get("inputTokens")
+                            .and_then(Value::as_u64)
+                            .unwrap_or_default(),
+                        tokens_out: u
+                            .get("outputTokens")
+                            .and_then(Value::as_u64)
+                            .unwrap_or_default(),
+                        cache_read: u
+                            .get("cacheReadTokens")
+                            .and_then(Value::as_u64)
+                            .unwrap_or_default(),
+                        cache_write: u
+                            .get("cacheWriteTokens")
+                            .and_then(Value::as_u64)
+                            .unwrap_or_default(),
                         cost_native: 0.0,
                         currency: "CNY".to_string(),
                         requests_search: 0,
@@ -274,7 +292,7 @@ mod tests {
     /// 回归：真实 DSH 日志是「每行一个 zstd frame」（每帧含行尾换行），只解首帧会丢全部后续行。
     #[test]
     fn decompresses_multiple_frames() {
-        use ruzstd::encoding::{compress_to_vec, CompressionLevel};
+        use ruzstd::encoding::{CompressionLevel, compress_to_vec};
         let mut blob = Vec::new();
         for line in GOLDEN.lines() {
             let t = line.trim();
@@ -282,7 +300,10 @@ mod tests {
                 continue;
             }
             // 帧内容必须带换行，否则解压后多行 JSON 会粘连成一行
-            blob.extend(compress_to_vec(format!("{t}\n").as_bytes(), CompressionLevel::Fastest));
+            blob.extend(compress_to_vec(
+                format!("{t}\n").as_bytes(),
+                CompressionLevel::Fastest,
+            ));
         }
         let p = std::env::temp_dir().join(format!("ebc-dsh-frames-{}.zstd", std::process::id()));
         std::fs::write(&p, &blob).unwrap();

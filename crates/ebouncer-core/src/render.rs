@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// 平铺水印 SVG（data URI，ASCII 文本避免编码问题）。
@@ -34,18 +36,18 @@ pub fn invoice_html(inv: &Invoice) -> String {
     }
     format!(
         "<!doctype html><html><head><meta charset=utf-8><title>Invoice {client}</title>\
-<style>*{{box-sizing:border-box;margin:0}}@page{{size:A4;margin:18mm}}body{{font:14px/1.6 'Segoe UI',system-ui,sans-serif;color:#111;{wm}}}\
-h1{{font-size:22px;margin:0 0 4px}}.muted{{color:#666;font-size:12px}}table{{width:100%;border-collapse:collapse;margin-top:18px}}\
-th,td{{text-align:left;padding:6px 8px;border-bottom:1px solid #ddd}}th{{font-size:12px;color:#555;background:#fafafa}}\
-.n{{text-align:right;font-variant-numeric:tabular-nums}}.total{{margin-top:18px;text-align:right;font-size:18px}}\
-.meta{{margin-top:26px;font-size:11px;color:#888;border-top:1px solid #eee;padding-top:8px}}</style></head>\
-<body><h1>AI 用量账单 · {client}</h1>\
-<div class=muted>周期 {from} ~ {to} · 币种 {currency} · 生成于 {gen}</div>\
-<table><thead><tr><th>工具</th><th>科目</th><th class=n>数量</th><th class=n>单价</th><th class=n>金额</th></tr></thead>\
-<tbody>{rows}</tbody></table>\
-<div class=total>合计：{total:.2} {currency}（加成 {markup:.0}% · 估算未含税）</div>\
-<div class=meta>口径：token×厂商公开定价页单价 + 工具按次计费，估算未含税；金额以厂商账单为准，本单提供归因分项。\
-账本指纹 {basis} · 费率表指纹 {rates_fp} · eBouncer v{ver}{watermark_note}</div></body></html>",
+    <style>*{{box-sizing:border-box;margin:0}}@page{{size:A4;margin:18mm}}body{{font:14px/1.6 'Segoe UI',system-ui,sans-serif;color:#111;{wm}}}\
+    h1{{font-size:22px;margin:0 0 4px}}.muted{{color:#666;font-size:12px}}table{{width:100%;border-collapse:collapse;margin-top:18px}}\
+    th,td{{text-align:left;padding:6px 8px;border-bottom:1px solid #ddd}}th{{font-size:12px;color:#555;background:#fafafa}}\
+    .n{{text-align:right;font-variant-numeric:tabular-nums}}.total{{margin-top:18px;text-align:right;font-size:18px}}\
+    .meta{{margin-top:26px;font-size:11px;color:#888;border-top:1px solid #eee;padding-top:8px}}</style></head>\
+    <body><h1>AI 用量账单 · {client}</h1>\
+    <div class=muted>周期 {from} ~ {to} · 币种 {currency} · 生成于 {gen}</div>\
+    <table><thead><tr><th>工具</th><th>科目</th><th class=n>数量</th><th class=n>单价</th><th class=n>金额</th></tr></thead>\
+    <tbody>{rows}</tbody></table>\
+    <div class=total>合计：{total:.2} {currency}（加成 {markup:.0}% · 估算未含税）</div>\
+    <div class=meta>口径：token×厂商公开定价页单价 + 工具按次计费，估算未含税；金额以厂商账单为准，本单提供归因分项。\
+    账本指纹 {basis} · 费率表指纹 {rates_fp} · eBouncer v{ver}{watermark_note}</div></body></html>",
         client = esc(&inv.client),
         from = esc(&inv.period.from),
         to = esc(&inv.period.to),
@@ -71,17 +73,31 @@ pub fn find_browser() -> Option<PathBuf> {
         }
     }
     let candidates: Vec<PathBuf> = if cfg!(windows) {
-        ["C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
-         "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
-         "C:/Program Files/Google/Chrome/Application/chrome.exe",
-         "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe"]
-            .iter().map(PathBuf::from).collect()
+        [
+            "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+            "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
+            "C:/Program Files/Google/Chrome/Application/chrome.exe",
+            "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .collect()
     } else {
-        ["google-chrome", "chromium", "chromium-browser", "microsoft-edge"]
-            .iter().map(|n| PathBuf::from(format!("/usr/bin/{n}")))
-            .chain(std::env::var("PATH").unwrap_or_default().split(std::path::MAIN_SEPARATOR)
-                .map(|d| PathBuf::from(d).join("google-chrome")))
-            .collect()
+        [
+            "google-chrome",
+            "chromium",
+            "chromium-browser",
+            "microsoft-edge",
+        ]
+        .iter()
+        .map(|n| PathBuf::from(format!("/usr/bin/{n}")))
+        .chain(
+            std::env::var("PATH")
+                .unwrap_or_default()
+                .split(std::path::MAIN_SEPARATOR)
+                .map(|d| PathBuf::from(d).join("google-chrome")),
+        )
+        .collect()
     };
     candidates.into_iter().find(|p| p.exists())
 }
@@ -123,13 +139,16 @@ fn percent_encode(s: &str) -> String {
 
 /// PDF 有效性：存在、非空壳、以 %PDF 头开始。
 fn pdf_ok(p: &Path) -> bool {
-    std::fs::read(p).map(|b| b.len() > 1024 && b.starts_with(b"%PDF")).unwrap_or(false)
+    std::fs::read(p)
+        .map(|b| b.len() > 1024 && b.starts_with(b"%PDF"))
+        .unwrap_or(false)
 }
 
 /// HTML → PDF。浏览器缺失时返回 Err 并保留 HTML 作为降级交付物。
 pub fn html_to_pdf(html_path: &Path, pdf_path: &Path) -> Result<(), String> {
-    let browser = find_browser()
-        .ok_or_else(|| "未找到 Chrome/Edge（可设 EBC_BROWSER 指向浏览器路径；HTML 版可直接使用）".to_string())?;
+    let browser = find_browser().ok_or_else(|| {
+        "未找到 Chrome/Edge（可设 EBC_BROWSER 指向浏览器路径；HTML 版可直接使用）".to_string()
+    })?;
     // 独立临时 profile：否则 headless Edge 读用户真实配置，弹出"微软重视您的隐私"首启页
     // 并被一起打印进 PDF（真机事故根因之二）。
     let tmp_profile = std::env::temp_dir().join(format!("ebc-pdf-{}", std::process::id()));
@@ -172,13 +191,22 @@ mod tests {
     fn inv(watermark: bool) -> Invoice {
         Invoice {
             client: "ACME".into(),
-            period: crate::bill::Period { from: "2026-11-01".into(), to: "2026-11-02".into() },
+            period: crate::bill::Period {
+                from: "2026-11-01".into(),
+                to: "2026-11-02".into(),
+            },
             items: vec![crate::bill::BillItem {
-                tool: "dsh".into(), category: "token_input".into(), qty: 1000000,
-                unit_price_per_k_or_mtok: 2.0, amount: 2.0,
-                price_source: "费率表版本 2026-11-01".into(), note: None,
+                tool: "dsh".into(),
+                category: "token_input".into(),
+                qty: 1000000,
+                unit_price_per_k_or_mtok: 2.0,
+                amount: 2.0,
+                price_source: "费率表版本 2026-11-01".into(),
+                note: None,
             }],
-            markup: 0.2, total: 2.4, currency: "CNY".into(),
+            markup: 0.2,
+            total: 2.4,
+            currency: "CNY".into(),
             generated_at: "2026-11-02T00:00:00Z".into(),
             data_basis: Some("abcd1234".into()),
             rates_snapshot: vec![],

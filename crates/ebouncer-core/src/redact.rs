@@ -25,7 +25,12 @@ pub fn redact(cmd: &str) -> String {
         let val = cap.get(4).unwrap();
         let mut h = Sha256::new();
         h.update(val.as_str().as_bytes());
-        let digest: String = h.finalize().iter().take(6).map(|b| format!("{b:02x}")).collect();
+        let digest: String = h
+            .finalize()
+            .iter()
+            .take(6)
+            .map(|b| format!("{b:02x}"))
+            .collect();
         out.push_str(&cmd[last..key.end()]);
         out.push_str(&cmd[key.end()..sep.end()]);
         if let Some(s) = scheme {

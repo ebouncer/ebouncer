@@ -46,8 +46,20 @@ impl RuleSet {
             if let Ok(re) = Regex::new(&r.pattern) {
                 if re.is_match(cmd) {
                     let decision = match r.action.as_str() {
-                        "deny" => if dry_run { "log-deny" } else { "deny" },
-                        "ask" => if dry_run { "log-ask" } else { "ask" },
+                        "deny" => {
+                            if dry_run {
+                                "log-deny"
+                            } else {
+                                "deny"
+                            }
+                        }
+                        "ask" => {
+                            if dry_run {
+                                "log-ask"
+                            } else {
+                                "ask"
+                            }
+                        }
                         _ => "log",
                     };
                     return (decision.into(), Some(r.id.clone()));
@@ -65,8 +77,20 @@ mod tests {
         RuleSet {
             version: "test".into(),
             rules: vec![
-                Rule { id: "rm-rf-root".into(), pattern: r"rm\s+(-[a-zA-Z]*[rR][a-zA-Z]*\s+)+(/|~|\$HOME)(\s|$)".into(), severity: "critical".into(), action: "deny".into(), note: String::new() },
-                Rule { id: "git-clean".into(), pattern: r"git\s+clean\s+-[a-zA-Z]*f".into(), severity: "high".into(), action: "ask".into(), note: String::new() },
+                Rule {
+                    id: "rm-rf-root".into(),
+                    pattern: r"rm\s+(-[a-zA-Z]*[rR][a-zA-Z]*\s+)+(/|~|\$HOME)(\s|$)".into(),
+                    severity: "critical".into(),
+                    action: "deny".into(),
+                    note: String::new(),
+                },
+                Rule {
+                    id: "git-clean".into(),
+                    pattern: r"git\s+clean\s+-[a-zA-Z]*f".into(),
+                    severity: "high".into(),
+                    action: "ask".into(),
+                    note: String::new(),
+                },
             ],
         }
     }

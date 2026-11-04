@@ -20,10 +20,14 @@ pub struct ClaudeCodeAdapter {
 
 impl Adapter for ClaudeCodeAdapter {
     fn parse_file(&self, path: &Path) -> Vec<LedgerEvent> {
-        let Ok(f) = File::open(path) else { return Vec::new() };
+        let Ok(f) = File::open(path) else {
+            return Vec::new();
+        };
         let mut out = Vec::new();
         for line in BufReader::new(f).lines().map_while(Result::ok) {
-            let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+            let Ok(v) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
             // TODO 核验：assistant 消息携带 usage{input_tokens,output_tokens,cache_read_input_tokens}
             let usage = match v.pointer("/message/usage") {
                 Some(u) => u,
@@ -87,7 +91,10 @@ mod tests {
         let raw = r#"{"type":"assistant","timestamp":"2026-11-01T08:00:00Z","sessionId":"abc","cwd":"/home/u/work/acme","message":{"model":"claude-sonnet-4-5","usage":{"input_tokens":120,"output_tokens":340,"cache_read_input_tokens":50}}}"#;
         let p = std::env::temp_dir().join("ebc-cc-stub.jsonl");
         std::fs::write(&p, raw).unwrap();
-        let evs = ClaudeCodeAdapter { session_hint: "x".into() }.parse_file(&p);
+        let evs = ClaudeCodeAdapter {
+            session_hint: "x".into(),
+        }
+        .parse_file(&p);
         assert_eq!(evs.len(), 1);
         assert_eq!(evs[0].project, "acme");
         assert_eq!(evs[0].tokens_in, 120);

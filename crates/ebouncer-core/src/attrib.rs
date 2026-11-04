@@ -107,8 +107,12 @@ mod tests {
     fn longest_prefix_wins() {
         let mut m = ClientMap::default();
         m.rules.insert("github.com/acme".into(), "ACME 公司".into());
-        m.rules.insert("github.com/acme/billing".into(), "ACME 计费项目".into());
-        assert_eq!(m.lookup("github.com/acme/billing").unwrap(), "ACME 计费项目");
+        m.rules
+            .insert("github.com/acme/billing".into(), "ACME 计费项目".into());
+        assert_eq!(
+            m.lookup("github.com/acme/billing").unwrap(),
+            "ACME 计费项目"
+        );
         assert_eq!(m.lookup("github.com/acme/other").unwrap(), "ACME 公司");
     }
 }

@@ -59,7 +59,6 @@ impl VerifyReport {
     }
 }
 
-
 /// 链式哈希：对除自身 hash 字段外的全部字段做 sha256。
 pub fn compute_hash(ev: &AuditEvent) -> String {
     let mut e = ev.clone();
@@ -115,7 +114,10 @@ pub fn checkpoint_path(path: &Path) -> PathBuf {
 
 /// 原子写入 checkpoint（先写 .tmp 再 rename，避免半截文件被当成篡改）。
 fn write_checkpoint(path: &Path, seq: u64, hash: &str) -> std::io::Result<()> {
-    let cp = AuditCheckpoint { seq, hash: hash.to_string() };
+    let cp = AuditCheckpoint {
+        seq,
+        hash: hash.to_string(),
+    };
     let p = checkpoint_path(path);
     let tmp = p.with_extension("head.tmp");
     fs::write(&tmp, serde_json::to_vec(&cp)?)?;
@@ -224,9 +226,17 @@ mod tests {
 
     fn base() -> AuditEvent {
         AuditEvent {
-            seq: 0, ts_ns: 1, uid: 1000, tty: "pts/0".into(), session: "s".into(),
-            cmd: "ls".into(), rule_id: None, decision: "log".into(), key_ref: None,
-            prev_hash: String::new(), hash: String::new(),
+            seq: 0,
+            ts_ns: 1,
+            uid: 1000,
+            tty: "pts/0".into(),
+            session: "s".into(),
+            cmd: "ls".into(),
+            rule_id: None,
+            decision: "log".into(),
+            key_ref: None,
+            prev_hash: String::new(),
+            hash: String::new(),
         }
     }
 
@@ -294,7 +304,9 @@ mod tests {
     fn detects_field_tamper() {
         let p = tmp("tamper").join("audit.jsonl");
         append(&p, base()).unwrap();
-        let body = fs::read_to_string(&p).unwrap().replace("\"ls\"", "\"rm -rf ~\"");
+        let body = fs::read_to_string(&p)
+            .unwrap()
+            .replace("\"ls\"", "\"rm -rf ~\"");
         fs::write(&p, body).unwrap();
         let r = verify(&p).unwrap();
         assert!(!r.is_ok(), "{r:?}");

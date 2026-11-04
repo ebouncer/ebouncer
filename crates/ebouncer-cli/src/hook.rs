@@ -79,8 +79,19 @@ pub fn init(home: &Path, shell: &str, yes: bool) -> i32 {
     let existing = std::fs::read_to_string(&rc).unwrap_or_default();
     let (stripped, had) = strip_block(&existing);
     if !yes {
-        println!("目标文件：{}（当前 {}）", rc.display(), if had { "已含 eBouncer 块，将原位更新" } else { "无 eBouncer 块，将追加" });
-        println!("--- 将注入以下内容（预览，未写入）---\n{}", block_for(shell));
+        println!(
+            "目标文件：{}（当前 {}）",
+            rc.display(),
+            if had {
+                "已含 eBouncer 块，将原位更新"
+            } else {
+                "无 eBouncer 块，将追加"
+            }
+        );
+        println!(
+            "--- 将注入以下内容（预览，未写入）---\n{}",
+            block_for(shell)
+        );
         println!("确认后用 `ebc init --shell {shell} --yes` 注入；EBC_DISABLE=1 可临时停用。");
         return 0;
     }
@@ -92,7 +103,11 @@ pub fn init(home: &Path, shell: &str, yes: bool) -> i32 {
     content.push_str(&block_for(shell));
     match std::fs::write(&rc, content) {
         Ok(_) => {
-            println!("已注入 {}。立即生效：source {} 或开新终端。", rc.display(), rc.display());
+            println!(
+                "已注入 {}。立即生效：source {} 或开新终端。",
+                rc.display(),
+                rc.display()
+            );
             0
         }
         Err(e) => {
@@ -107,7 +122,9 @@ pub fn uninstall(home: &Path, data_dir: &Path, purge: bool) -> i32 {
     let mut touched = false;
     for shell in ["bash", "zsh"] {
         let rc = rc_path(home, shell);
-        let Ok(existing) = std::fs::read_to_string(&rc) else { continue };
+        let Ok(existing) = std::fs::read_to_string(&rc) else {
+            continue;
+        };
         let (stripped, removed) = strip_block(&existing);
         if removed {
             match std::fs::write(&rc, stripped) {
@@ -130,14 +147,27 @@ pub fn uninstall(home: &Path, data_dir: &Path, purge: bool) -> i32 {
         let mut cleared = 0;
         for name in ["trial.json", "config", "rules.yaml"] {
             let p = data_dir.join(name);
-            if p.exists() && std::fs::remove_dir_all(&p).or_else(|_| std::fs::remove_file(&p)).is_ok() {
+            if p.exists()
+                && std::fs::remove_dir_all(&p)
+                    .or_else(|_| std::fs::remove_file(&p))
+                    .is_ok()
+            {
                 cleared += 1;
             }
         }
-        println!("已清理 {cleared} 项可再生状态；账本/审计链/导出保留于 {}", data_dir.display());
-        println!("确认要连证据一起删除请手动 rm -rf {}（不可逆，故不提供开关）", data_dir.display());
+        println!(
+            "已清理 {cleared} 项可再生状态；账本/审计链/导出保留于 {}",
+            data_dir.display()
+        );
+        println!(
+            "确认要连证据一起删除请手动 rm -rf {}（不可逆，故不提供开关）",
+            data_dir.display()
+        );
     } else {
-        println!("数据目录未动：{}（含审计链，卸载 ≠ 销毁证据）", data_dir.display());
+        println!(
+            "数据目录未动：{}（含审计链，卸载 ≠ 销毁证据）",
+            data_dir.display()
+        );
     }
     0
 }

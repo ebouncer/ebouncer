@@ -157,7 +157,11 @@ pub fn create(req: &BundleRequest) -> Result<(Vec<u8>, Manifest), String> {
         invoice.currency,
         invoice.total,
         invoice.markup * 100.0,
-        if audit_checked { " + audit.jsonl/audit.head" } else { "" },
+        if audit_checked {
+            " + audit.jsonl/audit.head"
+        } else {
+            ""
+        },
     );
     payload.insert("README.txt".into(), readme.into_bytes());
 
@@ -188,7 +192,10 @@ pub fn create(req: &BundleRequest) -> Result<(Vec<u8>, Manifest), String> {
 
     // SHA256SUMS 覆盖 manifest + 所有 payload（不含自身），便于第三方 sha256sum -c
     let mut sums = String::new();
-    sums.push_str(&format!("{}  manifest.json\n", sha256(manifest_json.as_bytes())));
+    sums.push_str(&format!(
+        "{}  manifest.json\n",
+        sha256(manifest_json.as_bytes())
+    ));
     for (path, data) in &payload {
         sums.push_str(&format!("{}  {}\n", sha256(data), path));
     }
@@ -205,9 +212,7 @@ pub fn create(req: &BundleRequest) -> Result<(Vec<u8>, Manifest), String> {
 /// 验证证据包（只读文件，不碰调用者的数据目录）。
 pub fn verify_bytes(bytes: &[u8]) -> Result<VerifyReport, String> {
     let files = zip_read(bytes)?;
-    let manifest_raw = files
-        .get("manifest.json")
-        .ok_or("包内缺少 manifest.json")?;
+    let manifest_raw = files.get("manifest.json").ok_or("包内缺少 manifest.json")?;
     let manifest: Manifest =
         serde_json::from_slice(manifest_raw).map_err(|e| format!("manifest.json 解析失败：{e}"))?;
     if manifest.schema_version != SCHEMA_VERSION {
@@ -336,15 +341,21 @@ pub fn verify_bytes(bytes: &[u8]) -> Result<VerifyReport, String> {
         let ap = tmp.join("audit.jsonl");
         fs::write(&ap, audit_raw).map_err(|e| format!("写临时审计文件失败：{e}"))?;
         if let Some(head) = files.get("audit.head") {
-            fs::write(tmp.join("audit.head"), head).map_err(|e| format!("写临时 checkpoint 失败：{e}"))?;
+            fs::write(tmp.join("audit.head"), head)
+                .map_err(|e| format!("写临时 checkpoint 失败：{e}"))?;
         } else {
-            warnings.push("包含 audit.jsonl 但没有 checkpoint：只能校验链内自洽，检测不了尾部截断".to_string());
+            warnings.push(
+                "包含 audit.jsonl 但没有 checkpoint：只能校验链内自洽，检测不了尾部截断"
+                    .to_string(),
+            );
         }
         let rep = audit::verify(&ap).map_err(|e| format!("审计链读取失败：{e}"))?;
         let _ = fs::remove_dir_all(&tmp);
         if !rep.is_ok() {
             if let Some((exp, got)) = rep.truncated {
-                return Err(format!("审计链被截断：checkpoint 记录 {exp} 条，包内只有 {got} 条"));
+                return Err(format!(
+                    "审计链被截断：checkpoint 记录 {exp} 条，包内只有 {got} 条"
+                ));
             }
             return Err(format!("审计链第 {} 行断链", rep.broken_at));
         }
@@ -368,7 +379,11 @@ fn crc32(data: &[u8]) -> u32 {
     for (i, slot) in table.iter_mut().enumerate() {
         let mut c = i as u32;
         for _ in 0..8 {
-            c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+            c = if c & 1 != 0 {
+                0xEDB8_8320 ^ (c >> 1)
+            } else {
+                c >> 1
+            };
         }
         *slot = c;
     }
@@ -380,8 +395,7 @@ fn crc32(data: &[u8]) -> u32 {
 }
 
 fn u16_at(d: &[u8], at: usize) -> Option<u16> {
-    d.get(at..at + 2)
-        .map(|s| u16::from_le_bytes([s[0], s[1]]))
+    d.get(at..at + 2).map(|s| u16::from_le_bytes([s[0], s[1]]))
 }
 fn u32_at(d: &[u8], at: usize) -> Option<u32> {
     d.get(at..at + 4)
