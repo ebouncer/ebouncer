@@ -50,9 +50,10 @@ ebc init --yes   # 确认后注入；重开终端生效
 
 之后你在**交互式终端**里敲的每条命令经过 33 条危险规则基线：命中就提示并记入审计链（**只提示，不拦截**——v0.1 是观察期）。注意：agent 自己用 `bash -c` 执行的命令**不经过** shell 钩子（宿主原生 hook 适配在 v0.2）。`ebc doctor` 随时看状态，`ebc audit-verify` 校验哈希链 + 尾部 checkpoint（能发现断链与尾部截断）。
 
-## beta 任务（二选一即可）
+## beta 任务（三选一即可）
 
 - **A**：正常用终端 3~5 天。任何"不该弹的弹了"（误拦）、"vim/tmux/sudo 不对劲"（兼容）、"数字和我直觉差太多"（账目），走 issue 模板；
-- **B**：真的用 `ebc bill --format pdf` 给甲方/自己开一张票，把感受发 issue #1。
+- **B**：真的用 `ebc bill --format pdf` 给甲方/自己开一张票，把感受发 [issue #1](https://github.com/ebouncer/ebouncer/issues/1)；
+- **C**：跑一次 `ebc bundle --client 测试甲方` + `ebc verify-bundle`，把 `✅ 证据包完整 …` 那一行发 [issue #1](https://github.com/ebouncer/ebouncer/issues/1)。这是"客户能自己验证账单"的核心路径，最需要真实环境反馈。
 
 误报数据是规则库的命根子：Anthropic 的数据显示人类只拦得住 13.6% 的危险命令，所以拦截上线前，我们必须先把误报磨到接近 0。

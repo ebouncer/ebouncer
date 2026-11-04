@@ -1,0 +1,25 @@
+name: issue-sync
+
+# 把仓库里的 issue 正文同步到 GitHub issue #1（beta 招募/收集）。
+# 这样正文可 review、可版本化，不需要把 token 放在本地。
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/ISSUE_BETA_INVITE.md
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 更新 issue #1 正文
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue edit 1 --body-file .github/ISSUE_BETA_INVITE.md
+          gh issue pin 1 || true

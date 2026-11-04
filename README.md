@@ -49,7 +49,7 @@ ebc doctor              # 环境体检
 
 ## 参与
 
-- **Beta 招募中（30 名）**：Linux/WSL/Git-Bash/MSYS2 优先，[5 分钟上手清单见 BETA.md](BETA.md)
+- **Beta 招募中（30 名）**：Linux/WSL/Git-Bash/MSYS2 优先，[5 分钟上手清单见 BETA.md](BETA.md) · [晒账单 / 反馈 #1](https://github.com/ebouncer/ebouncer/issues/1)
 - 误拦/漏拦/兼容问题走 issue 模板（结构化勾选），反馈直接进规则库
 - 安全问题先走 [SECURITY.md](SECURITY.md) 的私下披露
 
