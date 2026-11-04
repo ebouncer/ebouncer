@@ -63,10 +63,16 @@ pub fn invoice_html(inv: &Invoice) -> String {
     let sym = currency_symbol(&inv.currency);
     let mut rows = String::new();
     for i in &inv.items {
+        let note = i
+            .note
+            .as_deref()
+            .map(|n| format!("<div class=note>{}</div>", esc(n)))
+            .unwrap_or_default();
         rows.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td class=n>{}</td><td class=n>{:.4}</td><td class=n>{}{:.4}</td></tr>",
+            "<tr><td>{}</td><td>{}{}</td><td>{}</td><td>{}</td><td class=n>{}</td><td class=n>{:.4}</td><td class=n>{}{:.4}</td></tr>",
             esc(&i.tool),
             esc(&i.category),
+            note,
             unit_basis(&i.category),
             tier_label(&i.price_source),
             group_digits(i.qty),
@@ -82,7 +88,7 @@ pub fn invoice_html(inv: &Invoice) -> String {
     h1{{font-size:22px;margin:0 0 4px}}.muted{{color:#666;font-size:12px}}\
     table{{width:100%;border-collapse:collapse;margin-top:18px;font-size:12px}}\
     th,td{{text-align:left;padding:5px 5px;border-bottom:1px solid #ddd}}th{{font-size:11px;color:#555;background:#fafafa}}\
-    .n{{text-align:right;font-variant-numeric:tabular-nums}}.total{{margin-top:18px;text-align:right;font-size:18px}}\
+    .n{{text-align:right;font-variant-numeric:tabular-nums}}.note{{color:#999;font-size:10px;margin-top:2px}}.total{{margin-top:18px;text-align:right;font-size:18px}}\
     .meta{{margin-top:26px;font-size:11px;color:#888;border-top:1px solid #eee;padding-top:8px}}</style></head>\
     <body><h1>AI 用量账单 · {client}</h1>\
     <div class=muted>编号 {no} · 周期 {from} ~ {to} · 币种 {currency} · 生成于 {gen}</div>\
@@ -278,7 +284,7 @@ mod tests {
             unit_price_per_k_or_mtok: 5.0,
             amount: 0.06,
             price_source: "费率表 deepseek@2026-11-01 · 按次价（无时段折扣）".into(),
-            note: None,
+            note: Some("按次计费自 2026-11-01 起，本周期只记量不计费".into()),
         });
         let h = invoice_html(&i);
         assert!(h.contains("1M tokens"), "{h}");
@@ -287,6 +293,10 @@ mod tests {
         assert!(h.contains("按次"), "{h}");
         assert!(h.contains("INV-20261102-ABCD1234"), "{h}");
         assert!(h.contains("¥2.0000"), "{h}");
+        assert!(
+            h.contains("<div class=note>按次计费自 2026-11-01 起"),
+            "{h}"
+        );
     }
     #[test]
     fn clean_invoice_has_no_watermark() {

@@ -33,6 +33,18 @@ pub struct ToolRequestRate {
     pub search_per_k: f64,
     /// 每千次 Fetch 成功请求价格
     pub fetch_per_k: f64,
+    /// 按次计费生效日（YYYY-MM-DD / RFC3339）。早于该日期的事件只记量、不计费。
+    /// 缺省 = 一直生效（兼容旧费率表）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_from: Option<String>,
+}
+
+/// 按次价是否已在该事件时间生效。
+pub fn tool_requests_active(tr: &ToolRequestRate, ev_ts: &str) -> bool {
+    match tr.effective_from.as_deref() {
+        Some(from) => ts_cmp(from, ev_ts) != Ordering::Greater,
+        None => true,
+    }
 }
 
 /// 时段化计价（厂商本地时间）。缺省时该版本全天统一价，行为与旧费率表兼容。
@@ -332,10 +344,13 @@ pub fn estimate(ev: &LedgerEvent, table: &[VendorRates]) -> f64 {
         + ev.tokens_out as f64 * p.output_per_mtok() / 1e6
         + ev.cache_read as f64 * p.cache_read_per_mtok() / 1e6
         + ev.cache_write as f64 * p.cache_write_per_mtok() / 1e6;
-    // Search/Fetch 是独立的按次 API，官方定价页未给时段折扣，故不乘时段倍数
+    // Search/Fetch 是独立的按次 API，官方定价页未给时段折扣，故不乘时段倍数。
+    // 早于按次计费生效日的事件只记量、不计费。
     if let Some(tr) = p.tool_requests {
-        cost += ev.requests_search as f64 * tr.search_per_k / 1000.0
-            + ev.requests_fetch as f64 * tr.fetch_per_k / 1000.0;
+        if tool_requests_active(tr, &ev.ts) {
+            cost += ev.requests_search as f64 * tr.search_per_k / 1000.0
+                + ev.requests_fetch as f64 * tr.fetch_per_k / 1000.0;
+        }
     } else {
         cost += tool_cost(ev, table);
     }
@@ -371,6 +386,9 @@ fn tool_cost(ev: &LedgerEvent, table: &[VendorRates]) -> f64 {
     let Some(tr) = &v.tool_requests else {
         return 0.0;
     };
+    if !tool_requests_active(tr, &ev.ts) {
+        return 0.0;
+    }
     ev.requests_search as f64 * tr.search_per_k / 1000.0
         + ev.requests_fetch as f64 * tr.fetch_per_k / 1000.0
 }
@@ -414,6 +432,7 @@ mod tests {
             tool_requests: Some(ToolRequestRate {
                 search_per_k: per_k,
                 fetch_per_k: per_k,
+                effective_from: None,
             }),
         }
     }
@@ -546,6 +565,25 @@ mod tests {
         t.models[0].cache_write_per_mtok = 0.0;
         let table = std::slice::from_ref(&t);
         assert_eq!(estimate(&e, table), 0.0, "未配置时不得重复计费");
+    }
+
+    /// 按次计费生效日之前只记量、不计费（DeepSeek Search/Fetch 2026-11-01 起计费）。
+    #[test]
+    fn tool_requests_before_effective_date_are_free() {
+        let mut t = entry("2026-11-01", 1.0, 1.0, 5.0);
+        t.tool_requests.as_mut().unwrap().effective_from = Some("2026-11-01".into());
+        let table = std::slice::from_ref(&t);
+        let mut e = ev();
+        e.tokens_in = 0;
+        e.tokens_out = 0;
+        e.requests_search = 1000;
+        e.ts = "2026-10-15T00:00:00Z".into();
+        assert_eq!(estimate(&e, table), 0.0, "生效日前不应计按次费");
+        e.ts = "2026-11-15T00:00:00Z".into();
+        assert!(
+            (estimate(&e, table) - 5.0).abs() < 1e-9,
+            "生效日后应计 5 元"
+        );
     }
 
     #[test]

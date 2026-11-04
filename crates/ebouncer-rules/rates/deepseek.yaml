@@ -33,5 +33,7 @@ models:
     cache_read_per_mtok: 0.04
 tool_requests:
   # 已核验：每 1000 次【成功】请求 5 元，失败/无结果不计费；按次价无时段折扣
+  # 官方 2026-11-01 起才开始对 Search/Fetch 计费：更早的事件只记量、不计费
+  effective_from: "2026-11-01"
   search_per_k: 5.0
   fetch_per_k: 5.0

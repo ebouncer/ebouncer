@@ -62,6 +62,8 @@ struct UnitPrices {
     search: Option<f64>,
     fetch: Option<f64>,
     source: String,
+    /// 按次计费尚未生效时的说明（写到 search/fetch 行）
+    tool_note: Option<String>,
 }
 
 #[derive(Default)]
@@ -143,6 +145,22 @@ pub fn tier_label(price_source: &str) -> &'static str {
 ///
 /// 修复（2026-11-04）：此前无模型事件在账单里被当成"无价模型"记 0 元，而 `ebc ledger`
 /// 却按按次价计入，同一份账本两处金额不一致。
+/// 按次单价：生效日前只记量不计费（返回 0 单价 + 说明）。
+fn tool_amounts(
+    tr: &crate::rates::ToolRequestRate,
+    ev_ts: &str,
+) -> (Option<f64>, Option<f64>, Option<String>) {
+    if crate::rates::tool_requests_active(tr, ev_ts) {
+        (Some(tr.search_per_k), Some(tr.fetch_per_k), None)
+    } else {
+        let note = format!(
+            "按次计费自 {} 起，本周期只记量不计费",
+            tr.effective_from.as_deref().unwrap_or("生效日")
+        );
+        (Some(0.0), Some(0.0), Some(note))
+    }
+}
+
 fn resolve_price<'a>(
     model: &str,
     ev_ts: &str,
@@ -151,6 +169,7 @@ fn resolve_price<'a>(
     if model == "-" {
         let entry = tool_entry_at(ev_ts, table)?;
         let tr = entry.tool_requests.as_ref()?;
+        let (search, fetch, tool_note) = tool_amounts(tr, ev_ts);
         return Some((
             entry,
             RateKey {
@@ -163,16 +182,21 @@ fn resolve_price<'a>(
                 output: 0.0,
                 cache_read: 0.0,
                 cache_write: 0.0,
-                search: Some(tr.search_per_k),
-                fetch: Some(tr.fetch_per_k),
+                search,
+                fetch,
                 source: format!(
                     "费率表 {}@{} · 按次价（无时段折扣）",
                     entry.vendor, entry.effective_from
                 ),
+                tool_note,
             },
         ));
     }
     let p = price_at(model, ev_ts, table)?;
+    let (search, fetch, tool_note) = match p.tool_requests {
+        Some(tr) => tool_amounts(tr, ev_ts),
+        None => (None, None, None),
+    };
     Some((
         p.entry,
         RateKey {
@@ -185,9 +209,10 @@ fn resolve_price<'a>(
             output: p.output_per_mtok(),
             cache_read: p.cache_read_per_mtok(),
             cache_write: p.cache_write_per_mtok(),
-            search: p.tool_requests.map(|t| t.search_per_k),
-            fetch: p.tool_requests.map(|t| t.fetch_per_k),
+            search,
+            fetch,
             source: p.source(),
+            tool_note,
         },
     ))
 }
@@ -272,8 +297,16 @@ pub fn build(
                     raw_total += amount;
                     // 记了量但该条目没单独定价（如 DeepSeek 的写缓存已含在未命中输入价里）：
                     // 保留 0 元行并写明原因，避免被误读成"漏算"。
-                    let note = (category == "cache_write" && unit == 0.0)
-                        .then(|| "该费率条目未单独收取缓存写入费用（默认 0，写入已含在缓存未命中输入价内）".to_string());
+                    let note = if category == "cache_write" && unit == 0.0 {
+                        Some(
+                            "该费率条目未单独收取缓存写入费用（默认 0，写入已含在缓存未命中输入价内）"
+                                .to_string(),
+                        )
+                    } else if category == "search_request" || category == "fetch_request" {
+                        u.tool_note.clone()
+                    } else {
+                        None
+                    };
                     items.push(BillItem {
                         tool: tool.clone(),
                         category: category.to_string(),
@@ -416,6 +449,7 @@ mod tests {
             tool_requests: Some(ToolRequestRate {
                 search_per_k: 5.0,
                 fetch_per_k: 5.0,
+                effective_from: None,
             }),
         }]
     }
@@ -710,6 +744,28 @@ mod tests {
         );
         assert!(inv.items.iter().any(|i| i.price_source.contains("高峰")));
         assert!(inv.items.iter().any(|i| i.price_source.contains("空闲")));
+    }
+
+    /// 按次计费生效日前：保留 0 元行并写明原因（与账本 estimate 口径一致）。
+    #[test]
+    fn tool_requests_before_billing_start_show_zero_with_note() {
+        let mut t = table();
+        t[0].tool_requests.as_mut().unwrap().effective_from = Some("2026-11-01".into());
+        let mut e = ev(Some("ACME"), "deepseek-flash", 0, 0, 0, 1000, 0);
+        e.ts = "2026-10-15T00:00:00Z".into();
+        let inv = build("ACME", &[e], &t, 0.0, true, None).unwrap();
+        let row = inv
+            .items
+            .iter()
+            .find(|i| i.category == "search_request")
+            .expect("应保留 search 行");
+        assert_eq!(row.amount, 0.0);
+        assert!(
+            row.note.as_deref().unwrap_or("").contains("2026-11-01"),
+            "{:?}",
+            row.note
+        );
+        assert_eq!(inv.total, 0.0);
     }
 
     fn usd_table() -> Vec<VendorRates> {
