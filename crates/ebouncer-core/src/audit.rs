@@ -155,6 +155,11 @@ pub fn append(path: &Path, mut ev: AuditEvent) -> std::io::Result<()> {
     ev.prev_hash = prev;
     ev.hash = compute_hash(&ev);
     let mut f = OpenOptions::new().create(true).append(true).open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = f.set_permissions(fs::Permissions::from_mode(0o600));
+    }
     writeln!(f, "{}", serde_json::to_string(&ev).unwrap())?;
     f.flush()?;
     write_checkpoint(path, ev.seq, &ev.hash)?;

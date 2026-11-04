@@ -57,3 +57,8 @@ models:
     output_per_mtok: 5.0
     cache_read_per_mtok: 0.10
     cache_write_per_mtok: 1.25
+tool_requests:
+  # 官方 Specific tool pricing：Web Search $10 / 1,000 searches；
+  # Web Fetch 除 token 外无额外费用（按次价 0）。该价长期有效，不设生效日。
+  search_per_k: 10.0
+  fetch_per_k: 0.0

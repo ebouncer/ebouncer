@@ -48,6 +48,11 @@ pub fn append(path: &Path, ev: &LedgerEvent) -> std::io::Result<()> {
         fs::create_dir_all(dir)?;
     }
     let mut f = OpenOptions::new().create(true).append(true).open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
+    }
     writeln!(f, "{}", serde_json::to_string(ev).unwrap())?;
     Ok(())
 }

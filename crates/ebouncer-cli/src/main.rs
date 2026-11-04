@@ -168,7 +168,19 @@ fn home_dir() -> PathBuf {
 }
 
 fn resolve_data_dir(cli: &Option<PathBuf>) -> PathBuf {
-    cli.clone().unwrap_or_else(|| home_dir().join(".ebouncer"))
+    let dir = cli.clone().unwrap_or_else(|| home_dir().join(".ebouncer"));
+    ensure_private_dir(&dir);
+    dir
+}
+
+/// 本地账本目录权限：Unix 0700；Windows 由用户 ACL 控制（无 POSIX mode）。
+fn ensure_private_dir(dir: &Path) {
+    let _ = std::fs::create_dir_all(dir);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
 }
 
 /// 探测三个宿主的日志根目录（存在才返回）。
@@ -599,6 +611,19 @@ fn ts_is_valid(s: &str) -> bool {
 }
 
 fn main() {
+    // `ebc ... | head` 会提前关闭 stdout；默认 println! 会 panic 并 exit 101。
+    // 把 Broken pipe 视为正常结束（exit 0），其他 panic 仍打印。
+    std::panic::set_hook(Box::new(|info| {
+        let msg = info.to_string().to_lowercase();
+        if msg.contains("broken pipe")
+            || msg.contains("pipe has been ended")
+            || msg.contains("os error 32")
+            || msg.contains("os error 109")
+        {
+            std::process::exit(0);
+        }
+        eprintln!("{info}");
+    }));
     let cli = Cli::parse();
     let code = match cli.cmd {
         None => wizard(),

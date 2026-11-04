@@ -24,6 +24,10 @@
 - **发布渠道**：rc tag 自动标记 prerelease；`install.sh` 默认 `auto`（取最新 release，含 rc），`EBC_CHANNEL=stable` 只取稳定版；install-smoke 修复"空账本 `ebc ledger` 退出 1"的误判（rc.3–rc.5 卡在这里，rc.6 通过）。
 
 ### 修复
+- **Claude Code 重复入账**：同一条 API 响应会写成多行共享 `message.id` 的 assistant 行，适配器逐行入账导致 token 虚高（beta 实测 1.95×）。现在按 `(sessionId, message.id)` 去重，token 字段取最大值；115 行/46 个 message.id 的样本回落到与 cost-state 真值 −0.65%。
+- **Anthropic Web Search 按次漏计**：解析 `usage.server_tool_use.web_search_requests / web_fetch_requests`；Web Search $10/1K searches，Web Fetch 除 token 外无额外费用。
+- **权限**：数据目录在 Unix 下强制 0700、账本/审计文件 0600；Windows 明确由用户 ACL 控制，不再承诺 POSIX 0700。
+- **`ebc ... | head` panic**：Broken pipe 不再以 exit 101 崩溃，按正常结束 exit 0；其他 panic 照常打印。
 - **全 0 账单提示**：所有条目金额为 0 时明确提示“没有匹配到按量费率/可能是包月订阅”，避免被当成免费；水印状态不再显示“否（试用）”。
 - **按次计费生效日前被误收费**：DeepSeek Search/Fetch 自 2026-11-01 起计费，但费率回退把 2026-10 的事件也按 11 月的按次价计入（真实账本多收 ¥0.19）。`ToolRequestRate` 新增 `effective_from`，早于该日期只记量、不计费；账单保留 0 元行并注明原因。
 - **审计链尾部截断检测**：`audit-verify` 此前只校验链内 `prev_hash`，删掉最后 N 条仍报"完好"（2026-11-04 实测）。现在每次 append 原子更新 `audit.head` checkpoint（seq + hash），校验时对比：删尾部、删整文件、替换末条都会报"被截断"（退出码 2）；checkpoint 缺失时显式降级提示"无法检测截断"，不假装校验过。新增 4 条回归测试。

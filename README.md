@@ -66,7 +66,7 @@ Claude Code / Codex / Cursor 现在都自带 hook，能在工具调用层拦截�
 
 ## 数据都在你自己的机器上
 
-`~/.ebouncer/`（0700），纯本地 JSONL。审计链 = 哈希链 + 尾部 checkpoint（`ebc audit-verify` 能发现断链、删尾部、删整文件；同 UID 可同步改写，所以是"篡改可发现"而非"不可篡改"）；命令中的密钥在**落盘前**替换为哈希引用，明文永不进日志（PRIVACY.md 有字段白名单）。
+`~/.ebouncer/`（Unix 0700；Windows 由用户 ACL 控制），纯本地 JSONL。审计链 = 哈希链 + 尾部 checkpoint（`ebc audit-verify` 能发现断链、删尾部、删整文件；同 UID 可同步改写，所以是"篡改可发现"而非"不可篡改"）；命令中的密钥在**落盘前**替换为哈希引用，明文永不进日志（PRIVACY.md 有字段白名单）。
 
 ## 参与
 
