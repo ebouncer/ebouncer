@@ -1,20 +1,35 @@
-# 费率：deepseek（官方定价页 https://api-docs.deepseek.com/zh-cn/quick_start/pricing/ 于 2026-11-02 核实）
-# 口径说明：官方分高峰/空闲两档（空闲为高峰半价；周一至周五 9:00-12:00、14:00-18:00 为高峰，
-# 周末与法定节假日全天为空闲）。v0.1 简化：统一按【高峰价】计（略高估，可接受）；
-# 时段化计费进 v0.2 backlog。
+# 费率：deepseek（官方定价页 https://api-docs.deepseek.com/zh-cn/quick_start/pricing/ 于 2026-11-04 核实）
+# 时段口径（官方原文）：北京时间周一至周五（不含中国法定节假日）9:00-12:00、14:00-18:00 为高峰；
+# 其余时段（含周末与法定节假日全天）为空闲，空闲价 = 高峰价的一半。
+# 下表 token 单价填【高峰价】，空闲时段由 off_peak_multiplier 自动折算，不要手填两套数字。
 vendor: deepseek
 currency: CNY
 effective_from: "2026-11-01"
+time_tiers:
+  utc_offset_minutes: 480          # 北京时间（UTC+8）；中国无夏令时，固定偏移即可
+  weekdays_only: true              # 周末全天按空闲价
+  off_peak_multiplier: 0.5         # 官方：空闲价为高峰价一半
+  peak_windows: ["09:00-12:00", "14:00-18:00"]
+  # 中国法定节假日无法本地推导：需要精确计费时把日期按 "YYYY-MM-DD" 列在这里（全天按空闲价）
+  holiday_dates: []
 models:
   - name: deepseek-flash        # 官方模型：DeepSeek-V4.1-Flash-1017
-    input_per_mtok: 2.0         # 高峰 · 缓存未命中
-    output_per_mtok: 8.0        # 高峰
-    cache_read_per_mtok: 0.04   # 高峰 · 缓存命中
-  - name: deepseek-chat         # 旧名称：官方注明请求由 V4.1-Flash 服务并按 Flash 价计费
+    input_per_mtok: 2.0         # 高峰 · 缓存未命中（空闲 1.0）
+    output_per_mtok: 8.0        # 高峰（空闲 4.0）
+    cache_read_per_mtok: 0.04   # 高峰 · 缓存命中（空闲 0.02）
+  - name: deepseek-v4-pro       # 官方模型：DeepSeek-V4-Pro-0813（2026-11-04 定价页核实）
+    input_per_mtok: 9.0         # 高峰 · 缓存未命中（空闲 4.5）
+    output_per_mtok: 27.0       # 高峰（空闲 13.5）
+    cache_read_per_mtok: 0.3    # 高峰 · 缓存命中（空闲 0.15）
+  - name: deepseek-chat         # 旧模型名（历史日志）：2026-11-04 定价页已不再列出，暂按 Flash 价映射，待官方确认
+    input_per_mtok: 2.0
+    output_per_mtok: 8.0
+    cache_read_per_mtok: 0.04
+  - name: deepseek-v4-flash     # 定价页脚注明确：旧名，请求由 V4.1-Flash 服务并按 Flash 价计费
     input_per_mtok: 2.0
     output_per_mtok: 8.0
     cache_read_per_mtok: 0.04
 tool_requests:
-  # 已核验：每 1000 次【成功】请求 5 元，失败/无结果不计费（2026-11-01 起执行）
+  # 已核验：每 1000 次【成功】请求 5 元，失败/无结果不计费；按次价无时段折扣
   search_per_k: 5.0
   fetch_per_k: 5.0

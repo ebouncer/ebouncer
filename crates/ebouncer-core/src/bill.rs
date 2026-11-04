@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! 客户账单（ebc bill）：按客户归因的费用分项单。
-//! 结构对齐 schemas/invoice.schema.json。计价复用 rates::price_for（按事件时间选生效版本），
-//! 每个价格带来源（vendor + effective_from），金额保留估算口径说明——诚实是开票功能的生命线。
+//! 结构对齐 schemas/invoice.schema.json。计价复用 rates::price_at（按事件时间选生效版本与
+//! 高峰/空闲价档），每个价格带来源（vendor + effective_from + 价档），金额保留估算口径
+//! 说明——诚实是开票功能的生命线。
 
 use crate::ledger::LedgerEvent;
-use crate::rates::{price_for, VendorRates};
+use crate::rates::{price_at, tool_entry_at, Tier, VendorRates};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,8 +38,90 @@ pub struct Invoice {
     pub watermark: bool,
 }
 
-/// 从账本事件构建某客户的账单。qty 按类别聚合；价格取聚合窗口内任一事件时间的生效价
-/// （同厂商调价跨窗口的极端情况 v0.1 不处理，出现时按窗口首事件时间计价并在 note 声明）。
+/// 账单分项的计价锚点：同一 tool×model 可能跨多个费率版本、也可能跨高峰/空闲价档，
+/// 二者任一不同都必须拆行，否则整单会被单一单价"锁死"（2026-11-04 修复）。
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+struct RateKey {
+    vendor: String,
+    effective_from: String,
+    tier: Tier,
+}
+
+/// 一组事件的单价与来源文案（分组时确定，组内恒定）。
+#[derive(Clone, Debug)]
+struct UnitPrices {
+    input: f64,
+    output: f64,
+    cache_read: f64,
+    search: Option<f64>,
+    fetch: Option<f64>,
+    source: String,
+}
+
+#[derive(Default)]
+struct Qty {
+    tokens_in: u64,
+    tokens_out: u64,
+    cache_read: u64,
+    requests_search: u64,
+    requests_fetch: u64,
+}
+
+/// 解析一条事件的计价锚点与单价：
+/// - 有模型：走 rates::price_at（版本选择 + 高峰/空闲价档）；
+/// - 无模型（纯 Search/Fetch 按次事件）：走 rates::tool_entry_at 取按次价，价档记为统一价
+///   （官方按次价无时段折扣，与 rates::estimate 的口径一致）。
+///
+/// 修复（2026-11-04）：此前无模型事件在账单里被当成"无价模型"记 0 元，而 `ebc ledger`
+/// 却按按次价计入，同一份账本两处金额不一致。
+fn resolve_price<'a>(
+    model: &str,
+    ev_ts: &str,
+    table: &'a [VendorRates],
+) -> Option<(RateKey, UnitPrices)> {
+    if model == "-" {
+        let entry = tool_entry_at(ev_ts, table)?;
+        let tr = entry.tool_requests.as_ref()?;
+        return Some((
+            RateKey {
+                vendor: entry.vendor.clone(),
+                effective_from: entry.effective_from.clone(),
+                tier: Tier::Flat,
+            },
+            UnitPrices {
+                input: 0.0,
+                output: 0.0,
+                cache_read: 0.0,
+                search: Some(tr.search_per_k),
+                fetch: Some(tr.fetch_per_k),
+                source: format!(
+                    "费率表 {}@{} · 按次价（无时段折扣）",
+                    entry.vendor, entry.effective_from
+                ),
+            },
+        ));
+    }
+    let p = price_at(model, ev_ts, table)?;
+    Some((
+        RateKey {
+            vendor: p.entry.vendor.clone(),
+            effective_from: p.entry.effective_from.clone(),
+            tier: p.tier,
+        },
+        UnitPrices {
+            input: p.input_per_mtok(),
+            output: p.output_per_mtok(),
+            cache_read: p.cache_read_per_mtok(),
+            search: p.tool_requests.map(|t| t.search_per_k),
+            fetch: p.tool_requests.map(|t| t.fetch_per_k),
+            source: p.source(),
+        },
+    ))
+}
+
+/// 从账本事件构建某客户的账单。数量按 (tool, model, 生效费率条目) 聚合：
+/// 版本选择发生在**每条事件**上，同一模型跨调价窗口会拆成多行、各带自己的单价与
+/// price_source——账单金额因此与 `ebc ledger` 的汇总口径一致。
 pub fn build(
     client: &str,
     events: &[LedgerEvent],
@@ -64,74 +147,69 @@ pub fn build(
         .unwrap_or("-")
         .to_string();
 
-    // 聚合：(tool, model) → 各类数量
-    let mut agg: std::collections::BTreeMap<(String, String), (u64, u64, u64, u64, u64)> =
+    // 聚合：(tool, model, 费率条目+价档) → 数量 + 单价
+    let mut agg: std::collections::BTreeMap<(String, String, Option<RateKey>), (Qty, Option<UnitPrices>)> =
         Default::default();
     for e in &evts {
-        let k = (
-            e.tool.clone(),
-            e.model.clone().unwrap_or_else(|| "-".to_string()),
-        );
-        let a = agg.entry(k).or_default();
-        a.0 += e.tokens_in;
-        a.1 += e.tokens_out;
-        a.2 += e.cache_read;
-        a.3 += e.requests_search;
-        a.4 += e.requests_fetch;
+        let model = e.model.clone().unwrap_or_else(|| "-".to_string());
+        let resolved = resolve_price(&model, &e.ts, table);
+        let key = resolved.as_ref().map(|(k, _)| k.clone());
+        let units = resolved.as_ref().map(|(_, u)| u.clone());
+        let entry = agg
+            .entry((e.tool.clone(), model, key))
+            .or_insert_with(|| (Qty::default(), units));
+        entry.0.tokens_in += e.tokens_in;
+        entry.0.tokens_out += e.tokens_out;
+        entry.0.cache_read += e.cache_read;
+        entry.0.requests_search += e.requests_search;
+        entry.0.requests_fetch += e.requests_fetch;
     }
 
     let mut items: Vec<BillItem> = Vec::new();
     let mut raw_total = 0.0f64;
-    let ref_ts = if from == "-" { "" } else { from.as_str() };
-    for ((tool, model), (ti, to2, cr, rs, rf)) in &agg {
-        let pr = if model == "-" {
-            None
-        } else {
-            price_for(model, ref_ts, table)
-        };
-        let mut push = |category: &str, qty: u64, unit: f64, div: f64| {
-            if qty == 0 {
-                return;
-            }
-            let amount = qty as f64 * unit / div;
-            raw_total += amount;
-            items.push(BillItem {
-                tool: tool.clone(),
-                category: category.to_string(),
-                qty,
-                unit_price_per_k_or_mtok: unit,
-                amount,
-                price_source: format!(
-                    "费率表版本 {}",
-                    if ref_ts.is_empty() { "最新" } else { ref_ts }
-                ),
-                note: None,
-            });
-        };
-        match pr {
-            Some((mr, tr)) => {
-                push("token_input", *ti, mr.input_per_mtok, 1e6);
-                push("token_output", *to2, mr.output_per_mtok, 1e6);
-                push("cache_read", *cr, mr.cache_read_per_mtok, 1e6);
-                if let Some(tr) = tr {
-                    push("search_request", *rs, tr.search_per_k, 1e3);
-                    push("fetch_request", *rf, tr.fetch_per_k, 1e3);
+    for ((tool, model, _), (q, units)) in &agg {
+        match units {
+            Some(u) => {
+                let mut push = |category: &str, qty: u64, unit: f64, div: f64| {
+                    if qty == 0 {
+                        return;
+                    }
+                    let amount = qty as f64 * unit / div;
+                    raw_total += amount;
+                    items.push(BillItem {
+                        tool: tool.clone(),
+                        category: category.to_string(),
+                        qty,
+                        unit_price_per_k_or_mtok: unit,
+                        amount,
+                        price_source: u.source.clone(),
+                        note: None,
+                    });
+                };
+                push("token_input", q.tokens_in, u.input, 1e6);
+                push("token_output", q.tokens_out, u.output, 1e6);
+                push("cache_read", q.cache_read, u.cache_read, 1e6);
+                if let Some(v) = u.search {
+                    push("search_request", q.requests_search, v, 1e3);
+                }
+                if let Some(v) = u.fetch {
+                    push("fetch_request", q.requests_fetch, v, 1e3);
                 }
             }
             None => {
                 // 无价模型：数量入列、金额 0，note 声明——绝不静默丢行，也绝不编价
-                for (cat, q) in [
-                    ("token_input", ti),
-                    ("token_output", to2),
-                    ("cache_read", cr),
-                    ("search_request", rs),
-                    ("fetch_request", rf),
+                for (cat, qty) in [
+                    ("token_input", q.tokens_in),
+                    ("token_output", q.tokens_out),
+                    ("cache_read", q.cache_read),
+                    ("search_request", q.requests_search),
+                    ("fetch_request", q.requests_fetch),
                 ] {
-                    if *q > 0 {
+                    if qty > 0 {
                         items.push(BillItem {
                             tool: tool.clone(),
                             category: cat.to_string(),
-                            qty: *q,
+                            qty,
                             unit_price_per_k_or_mtok: 0.0,
                             amount: 0.0,
                             price_source: "无价格条目（费率表待补，禁止估价）".to_string(),
@@ -187,7 +265,7 @@ impl Invoice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rates::{ModelRate, ToolRequestRate, VendorRates};
+    use crate::rates::{ModelRate, TimeTiers, ToolRequestRate, VendorRates};
 
     fn ev(client: Option<&str>, model: &str, ti: u64, to: u64, cr: u64, rs: u64, rf: u64) -> LedgerEvent {
         LedgerEvent {
@@ -200,6 +278,7 @@ mod tests {
     fn table() -> Vec<VendorRates> {
         vec![VendorRates {
             vendor: "deepseek".into(), currency: "CNY".into(), effective_from: "2026-09-01".into(),
+            time_tiers: None,
             models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 1.0, output_per_mtok: 2.0, cache_read_per_mtok: 0.1 }],
             tool_requests: Some(ToolRequestRate { search_per_k: 5.0, fetch_per_k: 5.0 }),
         }]
@@ -229,5 +308,88 @@ mod tests {
         let csv = build("ACME", &evs, &table(), 0.0, true, None).to_csv();
         assert!(csv.starts_with("# 客户: ACME"));
         assert!(csv.contains("口径:"));
+    }
+
+    /// 回归（2026-11-04）：纯 Search/Fetch 事件（无模型）必须按费率表的按次价计费，
+    /// 不能记 0 元——否则 `ebc bill` 与 `ebc ledger` 对同一账本给出不同金额。
+    #[test]
+    fn prices_tool_only_events_from_per_request_rates() {
+        let mut e = ev(Some("ACME"), "-", 0, 0, 0, 1000, 500);
+        e.model = None;
+        let evs = vec![e];
+        let t = table();
+        let inv = build("ACME", &evs, &t, 0.0, true, None);
+        assert_eq!(inv.items.len(), 2, "{:?}", inv.items);
+        assert!((inv.total - 7.5).abs() < 1e-9, "total={}", inv.total);
+        assert!(inv.items.iter().all(|i| i.amount > 0.0));
+        assert!(inv.items.iter().any(|i| i.price_source.contains("按次价")), "{:?}", inv.items);
+        // 与账本汇总（rates::estimate）口径一致
+        let estimated: f64 = evs.iter().map(|x| crate::rates::estimate(x, &t)).sum();
+        assert!(
+            (inv.total - estimated).abs() < 1e-9,
+            "bill={} ledger={}",
+            inv.total,
+            estimated
+        );
+    }
+
+    /// 回归（2026-11-04）：同一客户跨调价窗口时，账单必须按费率版本拆行，
+    /// 而不是整单用窗口内单一时间点的单价（此前会按最早事件时间锁价）。
+    #[test]
+    fn splits_items_by_rate_version_across_price_change() {
+        let table = vec![
+            VendorRates {
+                vendor: "deepseek".into(), currency: "CNY".into(),
+                effective_from: "2026-09-01".into(),
+                time_tiers: None,
+                models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 1.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0 }],
+                tool_requests: None,
+            },
+            VendorRates {
+                vendor: "deepseek".into(), currency: "CNY".into(),
+                effective_from: "2026-11-01".into(),
+                time_tiers: None,
+                models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 2.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0 }],
+                tool_requests: None,
+            },
+        ];
+        let mut old = ev(Some("ACME"), "deepseek-flash", 1_000_000, 0, 0, 0, 0);
+        old.ts = "2026-10-15T00:00:00Z".into();
+        let mut new = ev(Some("ACME"), "deepseek-flash", 1_000_000, 0, 0, 0, 0);
+        new.ts = "2026-11-03T00:00:00Z".into();
+        let inv = build("ACME", &[old, new], &table, 0.0, true, None);
+        assert_eq!(inv.items.len(), 2, "跨版本应拆成两行");
+        assert!((inv.total - 3.0).abs() < 1e-9, "total={}", inv.total);
+        let sources: Vec<&str> = inv.items.iter().map(|i| i.price_source.as_str()).collect();
+        assert!(sources.iter().any(|s| s.contains("2026-09-01")), "{sources:?}");
+        assert!(sources.iter().any(|s| s.contains("2026-11-01")), "{sources:?}");
+    }
+
+    /// 回归（2026-11-04）：同一费率版本内跨高峰/空闲两个价档时，账单同样要拆行，
+    /// 且两行单价不同（高峰 2.0 / 空闲 1.0）。
+    #[test]
+    fn splits_items_by_peak_and_off_peak_tier() {
+        let table = vec![VendorRates {
+            vendor: "deepseek".into(), currency: "CNY".into(),
+            effective_from: "2026-11-01".into(),
+            time_tiers: Some(TimeTiers {
+                peak_windows: vec!["09:00-12:00".into(), "14:00-18:00".into()],
+                utc_offset_minutes: 480,
+                weekdays_only: true,
+                holiday_dates: vec![],
+                off_peak_multiplier: 0.5,
+            }),
+            models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 2.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0 }],
+            tool_requests: None,
+        }];
+        let mut peak = ev(Some("ACME"), "deepseek-flash", 1_000_000, 0, 0, 0, 0);
+        peak.ts = "2026-11-03T02:00:00Z".into(); // 周二 10:00 北京 → 高峰
+        let mut idle = ev(Some("ACME"), "deepseek-flash", 1_000_000, 0, 0, 0, 0);
+        idle.ts = "2026-11-03T15:00:00Z".into(); // 周二 23:00 北京 → 空闲
+        let inv = build("ACME", &[peak, idle], &table, 0.0, true, None);
+        assert_eq!(inv.items.len(), 2, "高峰/空闲应各成一行");
+        assert!((inv.total - 3.0).abs() < 1e-9, "2.0 + 1.0 = 3.0，total={}", inv.total);
+        assert!(inv.items.iter().any(|i| i.price_source.contains("高峰")));
+        assert!(inv.items.iter().any(|i| i.price_source.contains("空闲")));
     }
 }

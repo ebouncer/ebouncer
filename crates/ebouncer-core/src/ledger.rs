@@ -71,6 +71,8 @@ pub fn read_all(path: &Path) -> std::io::Result<(Vec<LedgerEvent>, u64)> {
     let f = BufReader::new(fs::File::open(path)?);
     for line in f.lines() {
         let line = line?;
+        // 容忍 UTF-8 BOM（Windows 编辑器/手工文件常见）：否则首行 JSON 解析失败被静默丢弃
+        let line = line.trim_start_matches('\u{feff}');
         if line.trim().is_empty() {
             continue;
         }
@@ -122,5 +124,19 @@ mod tests {
         assert!(!j.contains("\"client\""));
         let back: LedgerEvent = serde_json::from_str(&j).unwrap();
         assert_eq!(back.requests_search, 2);
+    }
+
+    /// 回归（2026-11-04 实测）：带 UTF-8 BOM 的账本首行曾被静默丢弃，账单随之少算一笔。
+    #[test]
+    fn read_all_tolerates_utf8_bom() {
+        let dir = std::env::temp_dir().join(format!("ebc-ledger-bom-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let p = dir.join("ledger.jsonl");
+        let line = r#"{"ts":"2026-11-01T00:00:00Z","session_id":"s","tool":"dsh","project":"p","tokens_in":1}"#;
+        fs::write(&p, format!("\u{feff}{line}\n")).unwrap();
+        let (evs, bad) = read_all(&p).unwrap();
+        assert_eq!(evs.len(), 1, "BOM 首行必须仍被解析");
+        assert_eq!(bad, 0);
+        let _ = fs::remove_file(&p);
     }
 }

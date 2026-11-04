@@ -246,26 +246,28 @@ fn do_ingest(
     n
 }
 
-/// 账本聚合 + 表格打印（ledger / 向导共用）。返回是否有数据。
-fn print_ledger(dir: &Path, days: i64) -> bool {
-    let path = dir.join("ledger.jsonl");
-    let (evs, bad) = ledger::read_all(&path).unwrap_or_else(|_| (Vec::new(), 0));
-    if evs.is_empty() {
-        return false;
-    }
-    let cutoff = (Utc::now() - Duration::days(days)).to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
-    #[derive(Default)]
-    struct Agg {
-        ti: u64,
-        to: u64,
-        cr: u64,
-        cw: u64,
-        sr: u64,
-        sf: u64,
-    }
-    let mut agg: BTreeMap<(String, String, String, String), Agg> = Default::default();
-    for e in &evs {
-        if e.ts < cutoff {
+/// 窗口内一组 (tool, project, client, model) 的数量合计与金额。
+#[derive(Default)]
+struct LedgerRow {
+    tokens_in: u64,
+    tokens_out: u64,
+    cache_read: u64,
+    requests_search: u64,
+    requests_fetch: u64,
+    cost: f64,
+}
+
+/// 按 (tool, project, client, model) 聚合窗口内事件。
+/// 金额**逐事件**按各自时间选生效费率版本再求和：同一行可能跨调价窗口，
+/// 用单个时间点为整行估价会系统性算错（2026-11-04 修复）。
+fn aggregate_window(
+    evs: &[ledger::LedgerEvent],
+    table: &[rates::VendorRates],
+    cutoff: &str,
+) -> BTreeMap<(String, String, String, String), LedgerRow> {
+    let mut agg: BTreeMap<(String, String, String, String), LedgerRow> = Default::default();
+    for e in evs {
+        if e.ts.as_str() < cutoff {
             continue;
         }
         let key = (
@@ -274,15 +276,27 @@ fn print_ledger(dir: &Path, days: i64) -> bool {
             e.client.clone().unwrap_or_else(|| "-".to_string()),
             e.model.clone().unwrap_or_else(|| "-".to_string()),
         );
-        let a = agg.entry(key).or_default();
-        a.ti += e.tokens_in;
-        a.to += e.tokens_out;
-        a.cr += e.cache_read;
-        a.cw += e.cache_write;
-        a.sr += e.requests_search;
-        a.sf += e.requests_fetch;
+        let row = agg.entry(key).or_default();
+        row.tokens_in += e.tokens_in;
+        row.tokens_out += e.tokens_out;
+        row.cache_read += e.cache_read;
+        row.requests_search += e.requests_search;
+        row.requests_fetch += e.requests_fetch;
+        row.cost += rates::estimate(e, table);
     }
+    agg
+}
+
+/// 账本聚合 + 表格打印（ledger / 向导共用）。返回是否有数据。
+fn print_ledger(dir: &Path, days: i64) -> bool {
+    let path = dir.join("ledger.jsonl");
+    let (evs, bad) = ledger::read_all(&path).unwrap_or_else(|_| (Vec::new(), 0));
+    if evs.is_empty() {
+        return false;
+    }
+    let cutoff = (Utc::now() - Duration::days(days)).to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
     let table = load_rates(dir);
+    let agg = aggregate_window(&evs, &table, &cutoff);
     println!("近 {days} 天花费汇总（工具 × 项目 × 客户 × 模型）");
     println!(
         "{:<13} {:<16} {:<16} {:<18} {:>10} {:>9} {:>9} {:>7} {:>6} {:>8}",
@@ -290,29 +304,10 @@ fn print_ledger(dir: &Path, days: i64) -> bool {
     );
     let mut top: Vec<(f64, (String, String, String, String))> = Vec::new();
     for (k, a) in &agg {
-        let est = rates::estimate(
-            &ledger::LedgerEvent {
-                ts: String::new(),
-                session_id: String::new(),
-                tool: k.0.clone(),
-                project: k.1.clone(),
-                client: None,
-                model: if k.3 == "-" { None } else { Some(k.3.clone()) },
-                tokens_in: a.ti,
-                tokens_out: a.to,
-                cache_read: a.cr,
-                cache_write: a.cw,
-                cost_native: 0.0,
-                currency: "CNY".to_string(),
-                requests_search: a.sr,
-                requests_fetch: a.sf,
-            },
-            &table,
-        );
-        top.push((est, k.clone()));
+        top.push((a.cost, k.clone()));
         println!(
             "{:<13} {:<16} {:<16} {:<18} {:>10} {:>9} {:>9} {:>7} {:>6} {:>8.2}",
-            k.0, k.1, k.2, k.3, a.ti, a.to, a.cr, a.sr, a.sf, est
+            k.0, k.1, k.2, k.3, a.tokens_in, a.tokens_out, a.cache_read, a.requests_search, a.requests_fetch, a.cost
         );
     }
     top.sort_by(|a, b| b.0.total_cmp(&a.0));
@@ -409,46 +404,21 @@ fn cmd_tag(client: &str, proj_dir: &Path, data_dir: &Path) -> i32 {
 }
 
 fn cmd_bill_clients(dir: &Path, days: i64) -> i32 {
-    let (evs, _) = ledger::read_all(&dir.join("ledger.jsonl")).unwrap_or_else(|_| (Vec::new(), 0));
+    let (evs, bad) = ledger::read_all(&dir.join("ledger.jsonl")).unwrap_or_else(|_| (Vec::new(), 0));
     let cutoff = (Utc::now() - Duration::days(days)).to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
     let table = load_rates(dir);
+    // 与 print_ledger 同源：逐事件按各自时间选费率版本，再按客户累加。
     let mut by_client: BTreeMap<String, f64> = Default::default();
-    let mut count = 0usize;
-    for e in &evs {
-        if e.ts >= cutoff {
-            count += 1;
-        }
+    for e in evs.iter().filter(|e| e.ts >= cutoff) {
+        let client = e.client.clone().unwrap_or_else(|| "(未归因)".to_string());
+        *by_client.entry(client).or_insert(0.0) += rates::estimate(e, &table);
     }
-    if count == 0 {
+    if bad > 0 {
+        eprintln!("（跳过了 {bad} 行无法解析的记录）");
+    }
+    if by_client.is_empty() {
         println!("近 {days} 天无账目。先跑 ebc ingest");
         return 0;
-    }
-    // 按客户聚合估算（与 ledger 表同源，客户粒度）
-    let mut agg: BTreeMap<(String, Option<String>), ledger::LedgerEvent> = Default::default();
-    for e in evs.iter().filter(|e| e.ts >= cutoff) {
-        let k = (
-            e.client.clone().unwrap_or_else(|| "(未归因)".to_string()),
-            e.model.clone(),
-        );
-        let a = agg.entry(k).or_insert_with(|| {
-            let mut z = e.clone();
-            z.tokens_in = 0;
-            z.tokens_out = 0;
-            z.cache_read = 0;
-            z.cache_write = 0;
-            z.requests_search = 0;
-            z.requests_fetch = 0;
-            z
-        });
-        a.tokens_in += e.tokens_in;
-        a.tokens_out += e.tokens_out;
-        a.cache_read += e.cache_read;
-        a.cache_write += e.cache_write;
-        a.requests_search += e.requests_search;
-        a.requests_fetch += e.requests_fetch;
-    }
-    for (client, ev) in &agg {
-        *by_client.entry(client.0.clone()).or_insert(0.0) += rates::estimate(ev, &table);
     }
     println!("近 {days} 天可开票对象：");
     let mut rows: Vec<(String, f64)> = by_client.iter().map(|(k, v)| (k.clone(), *v)).collect();
@@ -494,7 +464,10 @@ fn run(cmd: Cmd) -> i32 {
         Cmd::Demo => {
             // 纯内存演示：一个字节不落盘
             let dir = resolve_data_dir(&None);
-            let now = Utc::now();
+            // 固定取样时间（周二 10:00 北京时间 = 高峰档）：demo 不该因为晚上跑就显示半价
+            let now = DateTime::parse_from_rfc3339("2026-11-03T02:00:00Z")
+                .expect("固定样例时间恒可解析")
+                .with_timezone(&Utc);
             let samples: [ledger::LedgerEvent; 3] = [
                 demo_ev("claude-code", "acme", Some("ACME 公司"), "claude-sonnet-4-5", 4_000_000, 600_000, 0, 0, now),
                 demo_ev("codex", "billing", Some("ACME 计费项目"), "deepseek-chat", 2_000_000, 400_000, 2_000, 0, now),
@@ -771,5 +744,83 @@ fn demo_ev(
         currency: "CNY".to_string(),
         requests_search: sr,
         requests_fetch: sf,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ev(ts: &str, project: &str, tokens_in: u64) -> ledger::LedgerEvent {
+        ledger::LedgerEvent {
+            ts: ts.to_string(),
+            session_id: format!("s-{project}"),
+            tool: "dsh".to_string(),
+            project: project.to_string(),
+            client: None,
+            model: Some("deepseek-chat".to_string()),
+            tokens_in,
+            tokens_out: 0,
+            cache_read: 0,
+            cache_write: 0,
+            cost_native: 0.0,
+            currency: "CNY".to_string(),
+            requests_search: 0,
+            requests_fetch: 0,
+        }
+    }
+
+    fn rate(effective_from: &str, input_per_mtok: f64) -> rates::VendorRates {
+        rates::VendorRates {
+            vendor: "deepseek".to_string(),
+            currency: "CNY".to_string(),
+            effective_from: effective_from.to_string(),
+            time_tiers: None,
+            models: vec![rates::ModelRate {
+                name: "deepseek-chat".to_string(),
+                input_per_mtok,
+                output_per_mtok: 0.0,
+                cache_read_per_mtok: 0.0,
+            }],
+            tool_requests: None,
+        }
+    }
+
+    /// 回归（2026-11-04）：整行用空时间戳估价，会让跨调价窗口的行永远落到最早费率版本。
+    /// 两个同组事件分别落在旧价期(1.0)与新价期(2.0)，逐事件计价应为 3.0；
+    /// 若整行只取一个版本，会得到 2.0（最早版本）或 4.0（最新版本）。
+    #[test]
+    fn window_cost_prices_each_event_by_its_own_rate_version() {
+        let table = vec![rate("2026-09-01", 1.0), rate("2026-11-01", 2.0)];
+        let evs = vec![
+            ev("2026-10-15T00:00:00Z", "billing", 1_000_000),
+            ev("2026-11-03T00:00:00Z", "billing", 1_000_000),
+        ];
+        let agg = aggregate_window(&evs, &table, "2026-10-01T00:00:00Z");
+        assert_eq!(agg.len(), 1, "同一 (tool, project, client, model) 应聚合成一行");
+        let row = agg.values().next().unwrap();
+        assert!((row.cost - 3.0).abs() < 1e-9, "cost={}", row.cost);
+        assert_eq!(row.tokens_in, 2_000_000);
+    }
+
+    /// 同一窗口内不同项目各自取价，且窗口外事件不参与聚合。
+    #[test]
+    fn window_aggregation_filters_cutoff_and_prices_per_row() {
+        let table = vec![rate("2026-09-01", 1.0), rate("2026-11-01", 2.0)];
+        let evs = vec![
+            ev("2026-09-15T00:00:00Z", "old", 5_000_000), // 窗口外，必须被过滤
+            ev("2026-10-15T00:00:00Z", "new", 1_000_000), // 旧价 → 1.0
+            ev("2026-11-03T00:00:00Z", "later", 1_000_000), // 新价 → 2.0
+        ];
+        let agg = aggregate_window(&evs, &table, "2026-10-01T00:00:00Z");
+        assert_eq!(agg.len(), 2);
+        let cost_of = |project: &str| {
+            agg.iter()
+                .find(|(k, _)| k.1 == project)
+                .map(|(_, r)| r.cost)
+                .unwrap()
+        };
+        assert!((cost_of("new") - 1.0).abs() < 1e-9);
+        assert!((cost_of("later") - 2.0).abs() < 1e-9);
     }
 }

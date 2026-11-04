@@ -25,7 +25,7 @@
           "qty": { "type": "number", "minimum": 0 },
           "unit_price_per_k_or_mtok": { "type": "number", "minimum": 0 },
           "amount": { "type": "number", "minimum": 0 },
-          "price_source": { "type": "string", "description": "定价页 URL + 抓取日期——每个价格可溯源" },
+          "price_source": { "type": "string", "description": "价格来源：费率表条目「厂商@生效版本」+ 价档（统一价/高峰价/空闲价×倍数），便于人工回查费率表；同一 tool×model 跨版本或跨价档时会拆成多行" },
           "note": { "type": ["string", "null"], "description": "口径注释：估算/账单实测/混合" }
         }
       }
