@@ -825,6 +825,15 @@ fn run(cmd: Cmd) -> i32 {
                 return 1;
             }
 
+            // 全 0 账单通常不是"免费"，而是没匹配到按量费率（未知模型/包月订阅）。
+            if !inv.items.is_empty() && inv.items.iter().all(|i| i.amount == 0.0) {
+                eprintln!("提示：本单所有条目金额为 0——没有匹配到任何按量费率。");
+                eprintln!(
+                    "      常见原因：模型未配置费率（只记量、不编价），或该模型是包月/订阅计划。"
+                );
+                eprintln!("      包月计划请按月费单独记录/分摊；不要用 token 单价给客户开票。");
+            }
+
             // --bundle：与账单同一份数据/口径，直接产出可验证证据包
             if make_bundle {
                 let exp = dir.join("exports");
@@ -897,11 +906,7 @@ fn run(cmd: Cmd) -> i32 {
                         inv.period.to,
                         inv.currency,
                         fee,
-                        if inv.watermark {
-                            "是"
-                        } else {
-                            "否（试用）"
-                        }
+                        if inv.watermark { "是" } else { "否" }
                     );
                     println!(
                         "{:<13} {:<15} {:<10} {:<6} {:>14} {:>10} {:>12}",

@@ -50,7 +50,7 @@ ebc bill --client "客户名" --pdf --bundle
 | Claude Code | ⚠️ 适配器就绪，待真实样本回归 | Anthropic（USD） | 缓存写入按 5 分钟 TTL 价 |
 | Codex | ⚠️ 适配器就绪，待真实样本回归 | 暂无 OpenAI 费率（只记量） | 事件币种 USD |
 
-空模型/未知模型：只记量与 0 元行，绝不编价。同一客户跨币种时 `ebc bill` 会明确拒绝（汇率层未做）。
+空模型/未知模型：只记量与 0 元行，绝不编价。同一客户跨币种时 `ebc bill` 会明确拒绝（汇率层未做）。包月/订阅计划（如 MiniMax Token Plan）没有按 token 单价，只记量、金额 0；月费分摊在 v0.2。
 
 ## 为什么（Why now）
 
