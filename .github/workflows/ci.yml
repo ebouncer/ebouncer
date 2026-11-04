@@ -26,16 +26,24 @@ jobs:
         run: |
           bash -n install.sh
           shellcheck -S error install.sh
-      - name: install.ps1 语法（Windows PowerShell 5.1 兼容）
+      - name: install.ps1 语法（Windows PowerShell 5.1 兼容，且无 BOM）
         shell: pwsh
         run: |
+          $path = "install.ps1"
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $path))
+          if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+            throw "install.ps1 must not start with a UTF-8 BOM (breaks irm | iex)"
+          }
+          foreach ($b in $bytes) {
+            if ($b -gt 0x7F) { throw "install.ps1 must stay ASCII-only (byte $b found)" }
+          }
           $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile("install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path), [ref]$null, [ref]$errors) | Out-Null
           if ($errors.Count -gt 0) {
             $errors | ForEach-Object { Write-Error ("line {0}: {1}" -f $_.Extent.StartLineNumber, $_.Message) }
             exit 1
           }
-          Write-Host "install.ps1 syntax OK"
+          Write-Host "install.ps1 syntax OK (ASCII, no BOM)"
 
   release-check:
     runs-on: ubuntu-latest

@@ -1,17 +1,28 @@
-﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  eBouncer Windows 安装脚本（用户态，无需管理员）。
+  eBouncer installer for Windows (userland, no admin).
 .DESCRIPTION
-  下载最新 release 的 Windows 构建，校验 sha256，安装到
-  %LOCALAPPDATA%\eBouncer\bin，并把该目录加入当前用户 PATH。
-  用法：
+  Downloads the latest release, verifies sha256, installs to
+  %LOCALAPPDATA%\eBouncer\bin and adds it to the current user PATH.
+
+  NOTE: keep this file ASCII-only and BOM-free. `irm ... | iex` passes the
+  raw bytes as a string; a UTF-8 BOM becomes U+FEFF and breaks the first line.
+  ASCII-only also keeps direct execution working on Windows PowerShell 5.1.
+
+  Usage:
     irm https://raw.githubusercontent.com/ebouncer/ebouncer/main/install.ps1 | iex
-  固定版本：
-    $env:EBC_VERSION = "v0.1.0-rc.8"; irm ... | iex
-  不改 PATH：
+
+  Pin a version:
+    $env:EBC_VERSION = "v0.1.0-rc.9"; irm ... | iex
+
+  Skip PATH changes:
     $env:EBC_NO_PATH = "1"; irm ... | iex
 #>
+
+if ($PSVersionTable.PSVersion.Major -lt 5) {
+  throw "eBouncer requires PowerShell 5.1 or newer."
+}
+
 $ErrorActionPreference = "Stop"
 
 $repo = "ebouncer/ebouncer"
@@ -25,23 +36,28 @@ try {
   if (-not $version) {
     $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases?per_page=1" `
       -Headers @{ "User-Agent" = "ebouncer-install" }
-    if (-not $releases -or $releases.Count -eq 0) { throw "无法获取最新版本，请设置 EBC_VERSION" }
+    if (-not $releases -or $releases.Count -eq 0) {
+      throw "Could not resolve the latest release. Set EBC_VERSION (e.g. v0.1.0-rc.9)."
+    }
     $version = $releases[0].tag_name
   }
 
   $asset = "ebouncer-$version-x86_64-pc-windows-msvc.zip"
   $base = "https://github.com/$repo/releases/download/$version"
-  Write-Host "下载 $asset ..."
+  Write-Host "Downloading $asset ..."
   Invoke-WebRequest -Uri "$base/$asset" -OutFile (Join-Path $tmp $asset) -UseBasicParsing
   Invoke-WebRequest -Uri "$base/checksums.txt" -OutFile (Join-Path $tmp "checksums.txt") -UseBasicParsing
 
   $line = Get-Content (Join-Path $tmp "checksums.txt") |
     Where-Object { $_ -match [regex]::Escape($asset) } |
     Select-Object -First 1
-  if (-not $line) { throw "checksums.txt 中找不到 $asset" }
+  if (-not $line) { throw "checksums.txt does not list $asset" }
+
   $expected = ($line -split '\s+')[0].ToLower()
   $actual = (Get-FileHash (Join-Path $tmp $asset) -Algorithm SHA256).Hash.ToLower()
-  if ($actual -ne $expected) { throw "sha256 校验失败：期望 $expected，实际 $actual" }
+  if ($actual -ne $expected) {
+    throw "sha256 mismatch: expected $expected, got $actual"
+  }
 
   Expand-Archive -Path (Join-Path $tmp $asset) -DestinationPath (Join-Path $tmp "pkg") -Force
   New-Item -ItemType Directory -Path $binDir -Force | Out-Null
@@ -60,9 +76,11 @@ try {
 
   & (Join-Path $binDir "ebc.exe") --version
   Write-Host ""
-  Write-Host "✅ 已安装：$binDir\ebc.exe"
-  Write-Host "新开一个终端后运行：ebc"
-  if ($noPath) { Write-Host "（EBC_NO_PATH=1：未修改 PATH，请手动加入 $binDir）" }
+  Write-Host "Installed: $binDir\ebc.exe"
+  Write-Host "Open a new terminal and run: ebc"
+  if ($noPath) {
+    Write-Host "EBC_NO_PATH=1: PATH was not modified. Add $binDir manually."
+  }
 } finally {
   Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }
