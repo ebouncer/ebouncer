@@ -19,7 +19,7 @@ ebc bundle --help  # 能打印帮助 = 新版
 ```
 
 - 不想改 PATH：`EBC_NO_PATH=1 curl ... | sh`
-- 固定版本：`EBC_VERSION=v0.1.0-rc.11 curl ... | sh`
+- 固定版本：`EBC_VERSION=v0.1.0-rc.12 curl ... | sh`
 - 只支持 x86_64；arm64 在 v0.2。
 
 ### Windows（PowerShell 5.1+，无需管理员）
@@ -36,7 +36,7 @@ ebc --version
 ebc bundle --help
 ```
 
-- 固定版本：`$env:EBC_VERSION="v0.1.0-rc.11"; irm ... | iex`
+- 固定版本：`$env:EBC_VERSION="v0.1.0-rc.12"; irm ... | iex`
 - 不改 PATH：`$env:EBC_NO_PATH="1"; irm ... | iex`
 - Windows 需要 Edge 或 Chrome 才能出 PDF；没有时自动降级为 HTML。
 

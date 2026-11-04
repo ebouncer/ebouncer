@@ -4,7 +4,7 @@
 
 > **Beta 测试从这里开始**：看下方[快速开始](#快速开始)，跑完到 [issue #1](https://github.com/ebouncer/ebouncer/issues/1) 反馈。
 
-**状态：v0.1.0-rc.11 beta。** 当前能力：跨工具 AI 花费账本（ledger）、按客户归因出成本账单（bill）、可携带证据包（bundle / verify-bundle）、危险命令 dry-run 观察（仅交互式 shell）。计价覆盖 DeepSeek（CNY）与 Anthropic（USD）的单币种账单；混币客户暂不支持。宿主原生 hook 适配、内核探针、Shadow Vault 恢复在路线图上（见 ROADMAP）。
+**状态：v0.1.0-rc.12 beta。** 当前能力：跨工具 AI 花费账本（ledger）、按客户归因出成本账单（bill）、可携带证据包（bundle / verify-bundle）、危险命令 dry-run 观察（仅交互式 shell）。计价覆盖 DeepSeek（CNY）与 Anthropic（USD）的单币种账单；混币客户暂不支持。宿主原生 hook 适配、内核探针、Shadow Vault 恢复在路线图上（见 ROADMAP）。
 
 ## 快速开始
 

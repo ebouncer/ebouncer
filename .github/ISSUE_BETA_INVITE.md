@@ -1,4 +1,4 @@
-装 v0.1.0-rc.11，跑三件事，换一张客户能自己验证的账单。
+装 v0.1.0-rc.12，跑三件事，换一张客户能自己验证的账单。
 
 ## 1. 安装（30 秒）
 
@@ -21,7 +21,7 @@ ebc --version        # 0.1.0
 ebc bill --help      # 应看到 --pdf / --bundle
 ```
 
-固定版本：`EBC_VERSION=v0.1.0-rc.11`（Linux）或 `$env:EBC_VERSION="v0.1.0-rc.11"`（Windows）。
+固定版本：`EBC_VERSION=v0.1.0-rc.12`（Linux）或 `$env:EBC_VERSION="v0.1.0-rc.12"`（Windows）。
 
 安装失败请贴：`uname -a`（Windows 贴 `$PSVersionTable`）、`where.exe ebc`、`ebc --version`、`ebc doctor` 原始输出。
 
@@ -47,9 +47,10 @@ ebc verify-bundle ~/.ebouncer/exports/*.ebc.zip  # 预期：✅ 证据包完整 
 - 一句话：数字和你直觉差在哪？哪一步卡住了？
 - 误拦 / 漏拦 / 兼容问题 → 走 `beta-feedback` issue 模板
 
-## 已知不算 bug（v0.1.0-rc.11）
+## 已知不算 bug（v0.1.0-rc.12）
 
 - 默认无水印；`--watermark` 只用于演示/截图，`--trial-clean` 保留但无作用。
+- MiniMax 包月/订阅：先 `ebc plan set minimax --mode subscription --tier go`；默认月费直通，多客户共用加 `--allocate`。识别不了会只记量、0 元。
 - Claude 行按 **USD（$）** 计，DeepSeek 按 **CNY（¥）** 计；同一客户跨币种会被明确拒绝（汇率层未做）。
 - Search/Fetch 从 **2026-11-01** 起才计费；更早的事件只记量、金额 0。
 - shell 钩子只覆盖**交互式终端**；agent 的 `bash -c` 不经过（宿主原生 hook 适配在 v0.2）。
