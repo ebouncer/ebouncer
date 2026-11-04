@@ -36,6 +36,7 @@ jobs:
     needs: [build-linux, build-windows]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -51,9 +52,7 @@ jobs:
           generate_release_notes: true
           # rc/预发布标签自动标记 prerelease：install.sh 的 stable 渠道不会装到它
           prerelease: ${{ contains(github.ref_name, '-') }}
-          body: |
-            安装：`curl -fsSL https://raw.githubusercontent.com/ebouncer/ebouncer/main/install.sh | sh`
-            产物经 sha256sums 校验（checksums.txt）。cosign/SLSA 签名在 v0.3 引入。
+          body_path: .github/RELEASE_NOTES.md
   install-smoke:
     # 真 Linux 端到端：一行安装 → doctor → demo → ledger → audit-verify。
     # 开发者机器无 WSL 时，这里就是 Linux/musl 分支的验证场；发布不过此关不算发完。

@@ -1,0 +1,37 @@
+name: release-notes-sync
+
+# 改了统一说明后，同步到当前最新 release（通常是刚发的 rc / 正式版）。
+# release.yml 里 body_path 指向同一个文件，保证以后每个 tag 自动带完整说明。
+on:
+  push:
+    paths:
+      - ".github/RELEASE_NOTES.md"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 同步 release 正文
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          tag=$(gh release view --json tagName -q .tagName)
+          prev=$(git tag --sort=-v:refname | grep -Fxv "$tag" | head -1 || true)
+          {
+            cat .github/RELEASE_NOTES.md
+            echo
+            if [ -n "${prev:-}" ]; then
+              echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${prev}...${tag}"
+            fi
+          } > /tmp/release-notes.md
+          gh release edit "$tag" --notes-file /tmp/release-notes.md
+          echo "updated release notes for $tag"
