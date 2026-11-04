@@ -39,6 +39,18 @@ ebc verify-bundle ~/.ebouncer/exports/*.ebc.zip  # 预期：✅ 证据包完整 
 
 > 成本核算**不要加 `--markup`**；只有报价场景才用 `--markup 0.2`，标题会变成「AI 用量报价单」。
 
+### MiniMax / 包月用户额外一步
+
+```bash
+ebc plan detect --provider minimax --yes
+ebc plan show
+```
+
+- Key 在 `MINIMAX_API_KEY` / Claude 配置里时直接识别；没有就加 `--key-stdin` 粘贴一次（不落盘）
+- 订阅 Key 应显示 `mode=subscription`；普通 API Key 显示 `mode=payg`
+- 订阅账单：`ebc bill --client 测试甲方 --pdf`；多客户共用同一订阅加 `--allocate`
+- 识别结果不对，请把 `ebc plan show` 和报错贴出来（Key 打码）
+
 ## 3. 回报（一条评论即可）
 
 - 环境：Linux / WSL / Windows（PowerShell / Git-Bash）+ 版本
