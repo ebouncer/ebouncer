@@ -251,6 +251,19 @@ pub fn price_at<'a>(model: &str, ev_ts: &str, table: &'a [VendorRates]) -> Optio
     })
 }
 
+/// 费率快照指纹：对（已按厂商+生效版本排序的）条目原文做 sha256。
+/// 账单把该值连同条目快照一起冻结，日后可确认"这张单当时按哪张表算的"。
+pub fn snapshot_fingerprint(entries: &[VendorRates]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for e in entries {
+        // 结构体字段顺序固定 → JSON 序列化稳定；价格均为有限浮点
+        h.update(serde_json::to_vec(e).unwrap_or_default());
+        h.update(b"\n");
+    }
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// 解析费率 YAML（单条目或序列均可），load_dir 与出厂内嵌回退共用。
 pub fn parse_yaml(s: &str) -> Vec<VendorRates> {
     if let Ok(vs) = serde_yaml::from_str::<Vec<VendorRates>>(s) {

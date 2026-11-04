@@ -609,7 +609,12 @@ fn run(cmd: Cmd) -> i32 {
                         println!("{:<13} {:<15} {:>12} {:>12.4} {:>12.4}", i.tool, i.category, i.qty, i.unit_price_per_k_or_mtok, i.amount);
                     }
                     let basis = inv.data_basis.as_deref().unwrap_or("-");
-                    println!("合计（含加成）：¥{:.2} · 估算未含税 · 账本指纹 {}", inv.total, &basis[..basis.len().min(12)]);
+                    println!(
+                        "合计（含加成）：¥{:.2} · 估算未含税 · 账本指纹 {} · 费率表指纹 {}",
+                        inv.total,
+                        &basis[..basis.len().min(12)],
+                        &inv.rates_fingerprint[..inv.rates_fingerprint.len().min(12)]
+                    );
                 }
             }
             if out {

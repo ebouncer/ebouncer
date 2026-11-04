@@ -35,6 +35,11 @@ pub struct Invoice {
     pub currency: String,
     pub generated_at: String,
     pub data_basis: Option<String>,
+    /// 本次账单实际命中的费率条目原文（按厂商+生效版本去重排序）。
+    /// 账单因此自带价格依据：日后费率表被改，也能回答"这张单当时按哪一版、哪些单价算的"。
+    pub rates_snapshot: Vec<VendorRates>,
+    /// 快照的 sha256；同一账本 + 同一费率表重开账单应得到同一指纹（可复现性校验）。
+    pub rates_fingerprint: String,
     pub watermark: bool,
 }
 
@@ -67,7 +72,7 @@ struct Qty {
     requests_fetch: u64,
 }
 
-/// 解析一条事件的计价锚点与单价：
+/// 解析一条事件的计价锚点与单价（同时返回命中的费率条目，供账单冻结快照）：
 /// - 有模型：走 rates::price_at（版本选择 + 高峰/空闲价档）；
 /// - 无模型（纯 Search/Fetch 按次事件）：走 rates::tool_entry_at 取按次价，价档记为统一价
 ///   （官方按次价无时段折扣，与 rates::estimate 的口径一致）。
@@ -78,11 +83,12 @@ fn resolve_price<'a>(
     model: &str,
     ev_ts: &str,
     table: &'a [VendorRates],
-) -> Option<(RateKey, UnitPrices)> {
+) -> Option<(&'a VendorRates, RateKey, UnitPrices)> {
     if model == "-" {
         let entry = tool_entry_at(ev_ts, table)?;
         let tr = entry.tool_requests.as_ref()?;
         return Some((
+            entry,
             RateKey {
                 vendor: entry.vendor.clone(),
                 effective_from: entry.effective_from.clone(),
@@ -103,6 +109,7 @@ fn resolve_price<'a>(
     }
     let p = price_at(model, ev_ts, table)?;
     Some((
+        p.entry,
         RateKey {
             vendor: p.entry.vendor.clone(),
             effective_from: p.entry.effective_from.clone(),
@@ -150,11 +157,18 @@ pub fn build(
     // 聚合：(tool, model, 费率条目+价档) → 数量 + 单价
     let mut agg: std::collections::BTreeMap<(String, String, Option<RateKey>), (Qty, Option<UnitPrices>)> =
         Default::default();
+    // 价格快照：只冻结本单实际命中的条目（vendor+生效版本去重，BTreeMap 保证顺序稳定）
+    let mut used_entries: std::collections::BTreeMap<(String, String), VendorRates> = Default::default();
     for e in &evts {
         let model = e.model.clone().unwrap_or_else(|| "-".to_string());
         let resolved = resolve_price(&model, &e.ts, table);
-        let key = resolved.as_ref().map(|(k, _)| k.clone());
-        let units = resolved.as_ref().map(|(_, u)| u.clone());
+        if let Some((entry, _, _)) = &resolved {
+            used_entries
+                .entry((entry.vendor.clone(), entry.effective_from.clone()))
+                .or_insert_with(|| (*entry).clone());
+        }
+        let key = resolved.as_ref().map(|(_, k, _)| k.clone());
+        let units = resolved.as_ref().map(|(_, _, u)| u.clone());
         let entry = agg
             .entry((e.tool.clone(), model, key))
             .or_insert_with(|| (Qty::default(), units));
@@ -164,6 +178,8 @@ pub fn build(
         entry.0.requests_search += e.requests_search;
         entry.0.requests_fetch += e.requests_fetch;
     }
+    let rates_snapshot: Vec<VendorRates> = used_entries.into_values().collect();
+    let rates_fingerprint = crate::rates::snapshot_fingerprint(&rates_snapshot);
 
     let mut items: Vec<BillItem> = Vec::new();
     let mut raw_total = 0.0f64;
@@ -231,6 +247,8 @@ pub fn build(
         currency: "CNY".to_string(),
         generated_at: chrono::Utc::now().to_rfc3339(),
         data_basis,
+        rates_snapshot,
+        rates_fingerprint,
         watermark,
     }
 }
@@ -240,7 +258,7 @@ impl Invoice {
         serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".into())
     }
 
-    /// CSV：头注释写口径（PRD §3.3.5 红线）。
+    /// CSV：头注释写口径（PRD §3.3.5 红线）；带费率快照指纹，导出件也能回对价格依据。
     pub fn to_csv(&self) -> String {
         let mut s = format!(
             "# 客户: {} · 周期: {} ~ {} · 口径: token×单价+按次 · 加成 {:.0}% · 估算未含税 · 水印 {}\n",
@@ -250,6 +268,11 @@ impl Invoice {
             self.markup * 100.0,
             if self.watermark { "是" } else { "否" }
         );
+        s.push_str(&format!(
+            "# 账本指纹: {} · 费率表指纹: {}（条目快照见 JSON 导出的 rates_snapshot）\n",
+            self.data_basis.as_deref().unwrap_or("-"),
+            self.rates_fingerprint
+        ));
         s.push_str("tool,category,qty,unit_price,amount,currency\n");
         for i in &self.items {
             s.push_str(&format!(
@@ -308,6 +331,43 @@ mod tests {
         let csv = build("ACME", &evs, &table(), 0.0, true, None).to_csv();
         assert!(csv.starts_with("# 客户: ACME"));
         assert!(csv.contains("口径:"));
+        assert!(csv.contains("费率表指纹:"), "{csv}");
+    }
+
+    /// 账单自带价格依据：只冻结本单命中的费率条目，表内顺序不影响指纹，
+    /// 而用到的价格一变指纹必须变（复现性校验）。
+    #[test]
+    fn freezes_used_rate_entries_with_stable_fingerprint() {
+        let v1 = VendorRates {
+            vendor: "deepseek".into(), currency: "CNY".into(), effective_from: "2026-09-01".into(),
+            time_tiers: None,
+            models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 1.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0 }],
+            tool_requests: None,
+        };
+        let v2 = VendorRates {
+            vendor: "deepseek".into(), currency: "CNY".into(), effective_from: "2026-11-01".into(),
+            time_tiers: None,
+            models: vec![ModelRate { name: "deepseek-flash".into(), input_per_mtok: 2.0, output_per_mtok: 0.0, cache_read_per_mtok: 0.0 }],
+            tool_requests: None,
+        };
+        let mut e = ev(Some("ACME"), "deepseek-flash", 1_000_000, 0, 0, 0, 0);
+        e.ts = "2026-11-03T00:00:00Z".into();
+
+        let inv = build("ACME", std::slice::from_ref(&e), &[v1.clone(), v2.clone()], 0.0, true, None);
+        assert_eq!(inv.rates_snapshot.len(), 1, "只应冻结命中的版本");
+        assert_eq!(inv.rates_snapshot[0].effective_from, "2026-11-01");
+        assert_eq!(inv.rates_fingerprint.len(), 64);
+        assert!(inv.rates_fingerprint.chars().all(|c| c.is_ascii_hexdigit()));
+
+        // 费率表顺序变化不影响快照指纹（可复现）
+        let rev = build("ACME", std::slice::from_ref(&e), &[v2.clone(), v1.clone()], 0.0, true, None);
+        assert_eq!(rev.rates_fingerprint, inv.rates_fingerprint);
+
+        // 用到的单价变化 → 指纹必须变化
+        let mut v2b = v2;
+        v2b.models[0].input_per_mtok = 3.0;
+        let changed = build("ACME", std::slice::from_ref(&e), &[v1, v2b], 0.0, true, None);
+        assert_ne!(changed.rates_fingerprint, inv.rates_fingerprint);
     }
 
     /// 回归（2026-11-04）：纯 Search/Fetch 事件（无模型）必须按费率表的按次价计费，
